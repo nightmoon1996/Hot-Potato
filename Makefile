@@ -72,6 +72,7 @@ include: submodules
 	$(MKDIR) $(call platformpth, ./include)
 	$(call COPY,vendor/raylib/src,./include,raylib.h)
 	$(call COPY,vendor/raylib/src,./include,raymath.h)
+	$(call COPY,vendor/raylib/src,./include,rlgl.h)
 	$(call COPY,vendor/raylib-cpp/include,./include,*.hpp)
 
 # Build the raylib static library file and copy it into lib
