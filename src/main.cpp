@@ -1,14 +1,17 @@
 #include <raylib-cpp.hpp>
 
-int main() {
-    
+int main()
+{
+
     // Initialization
     int screenWidth = 800;
     int screenHeight = 450;
 
     raylib::Color textColor(LIGHTGRAY);
-    raylib::Window w(screenWidth, screenHeight, "Raylib C++ Starter Kit Example");
-    
+    raylib::Window w(screenWidth, screenHeight, "Maxion Test");
+
+    std::string textDraw = "Hello World";
+
     SetTargetFPS(60);
 
     // Main game loop
@@ -21,7 +24,9 @@ int main() {
         // Draw
         BeginDrawing();
         ClearBackground(RAYWHITE);
-        textColor.DrawText("Congrats! You created your first window!", 190, 200, 20);
+        textColor.DrawText(textDraw, 190, 200, 20);
+
+        // TraceLog(LOG_INFO, "test");
         EndDrawing();
     }
 

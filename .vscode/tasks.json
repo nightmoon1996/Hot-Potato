@@ -3,15 +3,20 @@
     "tasks": [
         {
             "label": "build",
-            "type": "shell",
+            "type": "process",
             "command": "C:\\msys64\\usr\\bin\\bash.exe",
             "args": [
                 "-lc",
-                "export PATH=\"/mingw64/bin:$PATH\"; export OS=Windows_NT; cd '/d/Code/maxion-test'; make bin/app"
+                "taskkill //F //IM app.exe 2>/dev/null; taskkill //F //IM gdb.exe 2>/dev/null; sleep 0.5; export PATH=\"/mingw64/bin:$PATH\"; export OS=Windows_NT; cd '/d/Code/maxion-test'; make bin/app"
             ],
             "group": {
                 "kind": "build",
                 "isDefault": true
+            },
+            "presentation": {
+                "reveal": "silent",
+                "panel": "shared",
+                "clear": true
             },
             "problemMatcher": ["$gcc"]
         }
