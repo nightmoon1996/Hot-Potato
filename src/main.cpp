@@ -3,6 +3,7 @@
 #include "Item.h"
 #include "Player.h"
 #include "Hazard.h"
+#include "Combat.h"
 
 void SmokeTestItems() {
     Inventory inv;
@@ -104,6 +105,55 @@ void SmokeTestHazard() {
     assert(p2.hp == Player::kMaxHp);
 }
 
+void SmokeTestCombatAndRevive() {
+    // Attack: in range, off cooldown -> succeeds
+    Player attacker(Vector2{0.0f, 0.0f});
+    Player target(Vector2{10.0f, 0.0f});
+    bool hit = TryAttack(attacker, target);
+    assert(hit == true);
+    assert(target.hp == Player::kMaxHp - Player::kAttackDamage);
+    assert(attacker.attackCooldownTimer == Player::kAttackCooldown);
+
+    // Immediately again: on cooldown -> fails
+    bool hit2 = TryAttack(attacker, target);
+    assert(hit2 == false);
+    assert(target.hp == Player::kMaxHp - Player::kAttackDamage); // unchanged
+
+    // Out of range -> fails
+    Player far(Vector2{1000.0f, 1000.0f});
+    Player attacker2(Vector2{0.0f, 0.0f});
+    bool hit3 = TryAttack(attacker2, far);
+    assert(hit3 == false);
+
+    // Revive: full sequence
+    Player reviver(Vector2{0.0f, 0.0f});
+    Player downed(Vector2{5.0f, 0.0f});
+    downed.ForceDown();
+    reviver.inventory.Add(ItemType::RevivePotion);
+
+    // Not enough time yet: still downed
+    bool completed1 = UpdateRevive(reviver, downed, true, 1.0f, 32.0f);
+    assert(completed1 == false);
+    assert(downed.state == PlayerState::Downed);
+
+    // Cross the threshold
+    bool completed2 = UpdateRevive(reviver, downed, true, 1.5f, 32.0f);
+    assert(completed2 == true);
+    assert(downed.state == PlayerState::Alive);
+    assert(downed.hp == Player::kReviveHp);
+    assert(reviver.inventory.Count(ItemType::RevivePotion) == 0);
+
+    // Releasing the key resets progress
+    Player reviver2(Vector2{0.0f, 0.0f});
+    Player downed2(Vector2{5.0f, 0.0f});
+    downed2.ForceDown();
+    reviver2.inventory.Add(ItemType::RevivePotion);
+    UpdateRevive(reviver2, downed2, true, 1.0f, 32.0f);
+    assert(reviver2.channelTimer > 0.0f);
+    UpdateRevive(reviver2, downed2, false, 0.0f, 32.0f); // key released
+    assert(reviver2.channelTimer == 0.0f);
+}
+
 int main()
 {
     SmokeTestItems();
@@ -114,6 +164,9 @@ int main()
 
     SmokeTestHazard();
     TraceLog(LOG_INFO, "SmokeTestHazard passed");
+
+    SmokeTestCombatAndRevive();
+    TraceLog(LOG_INFO, "SmokeTestCombatAndRevive passed");
 
     // Initialization
     int screenWidth = 800;
