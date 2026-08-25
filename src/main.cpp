@@ -1,6 +1,7 @@
 #include <cassert>
 #include <raylib-cpp.hpp>
 #include "Item.h"
+#include "Player.h"
 
 void SmokeTestItems() {
     Inventory inv;
@@ -44,10 +45,53 @@ void SmokeTestItems() {
     assert(pickupInv.Count(ItemType::RevivePotion) == 1);
 }
 
+void SmokeTestPlayerStateMachine() {
+    Player p(Vector2{0.0f, 0.0f});
+    assert(p.state == PlayerState::Alive);
+    assert(p.hp == Player::kMaxHp);
+
+    // Damage that doesn't kill
+    p.TakeDamage(30);
+    assert(p.state == PlayerState::Alive);
+    assert(p.hp == 70);
+
+    // Damage that downs
+    p.TakeDamage(100);
+    assert(p.state == PlayerState::Downed);
+    assert(p.hp == 0);
+    assert(p.downedTimer == Player::kDownedDuration);
+
+    // Damage while downed has no effect
+    p.TakeDamage(10);
+    assert(p.state == PlayerState::Downed);
+
+    // Downed timer expiring kills
+    p.UpdateTimers(Player::kDownedDuration + 1.0f);
+    assert(p.state == PlayerState::Dead);
+    assert(p.deathRespawnTimer == Player::kDeathRespawnDelay);
+
+    // Death respawn timer expiring respawns
+    p.UpdateTimers(Player::kDeathRespawnDelay + 1.0f);
+    assert(p.state == PlayerState::Alive);
+    assert(p.hp == Player::kRespawnHp);
+    assert(p.position.x == p.spawnPoint.x && p.position.y == p.spawnPoint.y);
+
+    // Revive from downed
+    Player p2(Vector2{0.0f, 0.0f});
+    p2.ForceDown();
+    assert(p2.state == PlayerState::Downed);
+    p2.ReviveFromDowned();
+    assert(p2.state == PlayerState::Alive);
+    assert(p2.hp == Player::kReviveHp);
+}
+
 int main()
 {
     SmokeTestItems();
     TraceLog(LOG_INFO, "SmokeTestItems passed");
+
+    SmokeTestPlayerStateMachine();
+    TraceLog(LOG_INFO, "SmokeTestPlayerStateMachine passed");
 
     // Initialization
     int screenWidth = 800;
