@@ -2,7 +2,7 @@
 #include <raylib-cpp.hpp>
 #include "Item.h"
 
-void SmokeTestInventory() {
+void SmokeTestItems() {
     Inventory inv;
     assert(inv.Count(ItemType::RevivePotion) == 0);
 
@@ -21,12 +21,33 @@ void SmokeTestInventory() {
     assert(inv.Remove(ItemType::RevivePotion, 1) == true);
     assert(inv.Count(ItemType::RevivePotion) == 0);
     assert(inv.Slots().size() == 0);
+
+    // Pickup logic
+    WorldItem item{ {100.0f, 100.0f}, ItemType::RevivePotion, true };
+    Inventory pickupInv;
+
+    // Too far away: no pickup
+    bool pickedFar = TryPickup(item, Vector2{500.0f, 500.0f}, pickupInv, 24.0f);
+    assert(pickedFar == false);
+    assert(item.active == true);
+    assert(pickupInv.Count(ItemType::RevivePotion) == 0);
+
+    // Within radius: picks up
+    bool pickedNear = TryPickup(item, Vector2{105.0f, 100.0f}, pickupInv, 24.0f);
+    assert(pickedNear == true);
+    assert(item.active == false);
+    assert(pickupInv.Count(ItemType::RevivePotion) == 1);
+
+    // Already inactive: no second pickup
+    bool pickedAgain = TryPickup(item, Vector2{105.0f, 100.0f}, pickupInv, 24.0f);
+    assert(pickedAgain == false);
+    assert(pickupInv.Count(ItemType::RevivePotion) == 1);
 }
 
 int main()
 {
-    SmokeTestInventory();
-    TraceLog(LOG_INFO, "SmokeTestInventory passed");
+    SmokeTestItems();
+    TraceLog(LOG_INFO, "SmokeTestItems passed");
 
     // Initialization
     int screenWidth = 800;

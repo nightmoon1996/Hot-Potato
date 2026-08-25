@@ -1,6 +1,8 @@
 #pragma once
 
 #include <vector>
+#include <raylib-cpp.hpp>
+#include <cmath>
 
 enum class ItemType {
     RevivePotion
@@ -61,3 +63,26 @@ public:
 private:
     std::vector<InventorySlot> slots;
 };
+
+struct WorldItem {
+    Vector2 position;
+    ItemType type;
+    bool active;
+};
+
+inline bool TryPickup(WorldItem& item, Vector2 playerPos, Inventory& inventory, float pickupRadius) {
+    if (!item.active) {
+        return false;
+    }
+    float dx = playerPos.x - item.position.x;
+    float dy = playerPos.y - item.position.y;
+    float distance = std::sqrt(dx * dx + dy * dy);
+    if (distance > pickupRadius) {
+        return false;
+    }
+    if (!inventory.Add(item.type)) {
+        return false;
+    }
+    item.active = false;
+    return true;
+}
