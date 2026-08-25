@@ -2,6 +2,7 @@
 #include <raylib-cpp.hpp>
 #include "Item.h"
 #include "Player.h"
+#include "Hazard.h"
 
 void SmokeTestItems() {
     Inventory inv;
@@ -85,6 +86,24 @@ void SmokeTestPlayerStateMachine() {
     assert(p2.hp == Player::kReviveHp);
 }
 
+void SmokeTestHazard() {
+    HazardZone zone{ Rectangle{0.0f, 0.0f, 100.0f, 100.0f} };
+    Player p(Vector2{50.0f, 50.0f}); // inside the zone
+    float carry = 0.0f;
+
+    // 1 second at 5 HP/sec should deal 5 damage total, spread across calls
+    for (int i = 0; i < 60; i++) {
+        ApplyHazardDamage(zone, p, 1.0f / 60.0f, carry);
+    }
+    assert(p.hp <= Player::kMaxHp - 4);
+
+    // Player outside the zone takes no damage
+    Player p2(Vector2{500.0f, 500.0f});
+    float carry2 = 0.0f;
+    ApplyHazardDamage(zone, p2, 1.0f, carry2);
+    assert(p2.hp == Player::kMaxHp);
+}
+
 int main()
 {
     SmokeTestItems();
@@ -92,6 +111,9 @@ int main()
 
     SmokeTestPlayerStateMachine();
     TraceLog(LOG_INFO, "SmokeTestPlayerStateMachine passed");
+
+    SmokeTestHazard();
+    TraceLog(LOG_INFO, "SmokeTestHazard passed");
 
     // Initialization
     int screenWidth = 800;
