@@ -168,30 +168,129 @@ int main()
     SmokeTestCombatAndRevive();
     TraceLog(LOG_INFO, "SmokeTestCombatAndRevive passed");
 
-    // Initialization
-    int screenWidth = 800;
-    int screenHeight = 450;
+    TraceLog(LOG_INFO, "All smoke tests passed");
 
-    raylib::Color textColor(LIGHTGRAY);
-    raylib::Window w(screenWidth, screenHeight, "Maxion Test");
-
-    std::string textDraw = "Hello World";
-
+    int screenWidth = 1000;
+    int screenHeight = 600;
+    raylib::Window w(screenWidth, screenHeight, "Maxion Test - Pickup/Inventory/Revive");
     SetTargetFPS(60);
 
-    // Main game loop
-    while (!w.ShouldClose()) // Detect window close button or ESC key
+    Player p1(Vector2{150.0f, 300.0f});
+    Player p2(Vector2{850.0f, 300.0f});
+    float p1HazardCarry = 0.0f;
+    float p2HazardCarry = 0.0f;
+
+    HazardZone hazard{ Rectangle{450.0f, 200.0f, 100.0f, 200.0f} };
+
+    std::vector<WorldItem> worldItems = {
+        WorldItem{ Vector2{300.0f, 500.0f}, ItemType::RevivePotion, true },
+        WorldItem{ Vector2{700.0f, 100.0f}, ItemType::RevivePotion, true },
+    };
+
+    const float moveSpeed = 200.0f;
+    const float pickupRadius = 24.0f;
+    const float reviveRange = 32.0f;
+
+    while (!w.ShouldClose())
     {
-        // Update
+        float dt = GetFrameTime();
 
-        // TODO: Update your variables here
+        // --- Input: movement (only when Alive) ---
+        if (p1.state == PlayerState::Alive) {
+            Vector2 move{0, 0};
+            if (IsKeyDown(KEY_W)) move.y -= 1;
+            if (IsKeyDown(KEY_S)) move.y += 1;
+            if (IsKeyDown(KEY_A)) move.x -= 1;
+            if (IsKeyDown(KEY_D)) move.x += 1;
+            p1.position.x += move.x * moveSpeed * dt;
+            p1.position.y += move.y * moveSpeed * dt;
+        }
+        if (p2.state == PlayerState::Alive) {
+            Vector2 move{0, 0};
+            if (IsKeyDown(KEY_UP)) move.y -= 1;
+            if (IsKeyDown(KEY_DOWN)) move.y += 1;
+            if (IsKeyDown(KEY_LEFT)) move.x -= 1;
+            if (IsKeyDown(KEY_RIGHT)) move.x += 1;
+            p2.position.x += move.x * moveSpeed * dt;
+            p2.position.y += move.y * moveSpeed * dt;
+        }
 
-        // Draw
+        // --- Input: pickup (interact key, only when Alive) ---
+        if (p1.state == PlayerState::Alive && IsKeyPressed(KEY_E)) {
+            for (auto& item : worldItems) {
+                if (TryPickup(item, p1.position, p1.inventory, pickupRadius)) break;
+            }
+        }
+        if (p2.state == PlayerState::Alive && IsKeyPressed(KEY_RIGHT_CONTROL)) {
+            for (auto& item : worldItems) {
+                if (TryPickup(item, p2.position, p2.inventory, pickupRadius)) break;
+            }
+        }
+
+        // --- Input: attack ---
+        if (IsKeyPressed(KEY_Q)) {
+            TryAttack(p1, p2);
+        }
+        if (IsKeyPressed(KEY_RIGHT_SHIFT)) {
+            TryAttack(p2, p1);
+        }
+        UpdateAttackCooldown(p1, dt);
+        UpdateAttackCooldown(p2, dt);
+
+        // --- Input + logic: channel revive (interact key held) ---
+        bool p1InteractHeld = IsKeyDown(KEY_E);
+        bool p2InteractHeld = IsKeyDown(KEY_RIGHT_CONTROL);
+        UpdateRevive(p1, p2, p1InteractHeld, dt, reviveRange);
+        UpdateRevive(p2, p1, p2InteractHeld, dt, reviveRange);
+
+        // --- Hazard damage ---
+        ApplyHazardDamage(hazard, p1, dt, p1HazardCarry);
+        ApplyHazardDamage(hazard, p2, dt, p2HazardCarry);
+
+        // --- State timers (downed -> dead -> respawn) ---
+        p1.UpdateTimers(dt);
+        p2.UpdateTimers(dt);
+
+        // --- Draw ---
         BeginDrawing();
         ClearBackground(RAYWHITE);
-        textColor.DrawText(textDraw, 190, 200, 20);
 
-        // TraceLog(LOG_INFO, "test");
+        DrawRectangleRec(hazard.bounds, Fade(RED, 0.3f));
+
+        for (const auto& item : worldItems) {
+            if (item.active) {
+                DrawCircleV(item.position, 8, GOLD);
+            }
+        }
+
+        auto drawPlayer = [](const Player& p, Color color, const char* label) {
+            Color drawColor = color;
+            if (p.state == PlayerState::Downed) drawColor = GRAY;
+            if (p.state == PlayerState::Dead) drawColor = Fade(GRAY, 0.3f);
+
+            DrawCircleV(p.position, 16, drawColor);
+            DrawText(label, (int)p.position.x - 10, (int)p.position.y - 34, 14, BLACK);
+
+            int barWidth = 40;
+            DrawRectangle((int)p.position.x - barWidth / 2, (int)p.position.y - 26, barWidth, 5, DARKGRAY);
+            int hpWidth = (int)(barWidth * ((float)p.hp / Player::kMaxHp));
+            DrawRectangle((int)p.position.x - barWidth / 2, (int)p.position.y - 26, hpWidth, 5, GREEN);
+
+            DrawText(TextFormat("Potions: %d", p.inventory.Count(ItemType::RevivePotion)),
+                      (int)p.position.x - 30, (int)p.position.y + 20, 12, DARKBLUE);
+
+            if (p.channelTimer > 0.0f) {
+                float ratio = p.channelTimer / Player::kChannelDuration;
+                DrawCircleSector(p.position, 24, -90, -90 + 360 * ratio, 32, Fade(SKYBLUE, 0.6f));
+            }
+        };
+
+        drawPlayer(p1, BLUE, "P1");
+        drawPlayer(p2, MAROON, "P2");
+
+        DrawText("P1: WASD move, E pickup/revive, Q attack", 10, 10, 16, BLACK);
+        DrawText("P2: Arrows move, RCtrl pickup/revive, RShift attack", 10, 30, 16, BLACK);
+
         EndDrawing();
     }
 
