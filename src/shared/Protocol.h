@@ -91,7 +91,7 @@ struct WorldItemSnapshot {
 };
 
 struct SnapshotMsg {
-    PlayerSnapshot players[2];
+    PlayerSnapshot players[4];
     WorldItemSnapshot items[2];
     float hazardX;
     float hazardY;
