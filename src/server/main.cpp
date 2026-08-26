@@ -500,15 +500,15 @@ int main(int argc, char** argv) {
                             packet.insert(packet.end(), full.begin(), full.end());
                             socket.SendTo(fromIp, fromPort, packet.data(), packet.size());
                         } else {
-                            Session* session = sessionManager.GetSession(sessionName);
-                            if (sessionWorldItems.find(sessionName) == sessionWorldItems.end()) {
-                                sessionWorldItems[sessionName] = {
+                            Session* session = sessionManager.GetSession(outcome.roomCode);
+                            if (sessionWorldItems.find(outcome.roomCode) == sessionWorldItems.end()) {
+                                sessionWorldItems[outcome.roomCode] = {
                                     WorldItem{ Vector2{300.0f, 500.0f}, ItemType::RevivePotion, true },
                                     WorldItem{ Vector2{700.0f, 100.0f}, ItemType::RevivePotion, true },
                                 };
-                                sessionHazardCarry[sessionName][0] = 0.0f;
-                                sessionHazardCarry[sessionName][1] = 0.0f;
-                                sessionSnapshotSeq[sessionName] = 1;
+                                sessionHazardCarry[outcome.roomCode][0] = 0.0f;
+                                sessionHazardCarry[outcome.roomCode][1] = 0.0f;
+                                sessionSnapshotSeq[outcome.roomCode] = 1;
                             }
 
                             WelcomeMsg welcome{
@@ -516,8 +516,9 @@ int main(int argc, char** argv) {
                                 Player::kMaxHp, Player::kDownedDuration, Player::kDeathRespawnDelay,
                                 Player::kReviveHp, Player::kRespawnHp, Player::kAttackCooldown,
                                 Player::kAttackRange, Player::kAttackDamage, Player::kChannelDuration,
-                                kHazardDamagePerSecond, Inventory::kCapacity
+                                kHazardDamagePerSecond, Inventory::kCapacity, {}
                             };
+                            std::strncpy(welcome.roomCode, outcome.roomCode.c_str(), sizeof(welcome.roomCode) - 1);
                             PlayerSlot& slot = session->slots[outcome.slotIndex];
                             std::vector<uint8_t> welcomeBytes;
                             SerializeStruct(welcome, welcomeBytes);
