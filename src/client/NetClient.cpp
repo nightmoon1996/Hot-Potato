@@ -20,10 +20,17 @@ void NetClient::SendAck(uint32_t ackedSeq) {
     socket.SendTo(serverIp, serverPort, packet.data(), packet.size());
 }
 
-bool NetClient::Connect(const std::string& ip, uint16_t port, const std::string& session) {
+bool NetClient::CreateRoom(const std::string& ip, uint16_t port) {
     serverIp = ip;
     serverPort = port;
-    sessionName = session;
+    sessionName = "";
+    return AttemptConnect(0);
+}
+
+bool NetClient::JoinRoom(const std::string& ip, uint16_t port, const std::string& roomCode) {
+    serverIp = ip;
+    serverPort = port;
+    sessionName = roomCode;
     return AttemptConnect(0);
 }
 
@@ -73,6 +80,10 @@ bool NetClient::AttemptConnect(uint32_t reconnectToken) {
                             return true;
                         }
                     } else if (type == MessageType::Rejected) {
+                        RejectedMsg reject{};
+                        if (DeserializeStruct(payload + 1, payloadLen - 1, reject)) {
+                            lastRejectReason = reject.reason;
+                        }
                         connected = false;
                         return false;
                     }
