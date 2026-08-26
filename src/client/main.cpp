@@ -172,7 +172,10 @@ int main(int argc, char** argv)
         }
 
         // Draw the potato itself (a simple colored circle; no arc/height rendering this phase).
-        {
+        // Guarded: before the first snapshot arrives `snap` is default-constructed, and a
+        // potato that is neither held nor in flight (no Alive player to hold it) has no
+        // meaningful position — in both cases drawing would put a phantom circle at (0,0).
+        if (netClient.HasReceivedSnapshot() && (snap.potato.held || snap.potato.inFlight)) {
             const PotatoSnapshot& potato = snap.potato;
             Color potatoColor = BROWN;
             DrawCircleV(Vector2{ potato.posX, potato.posY }, 10.0f, potatoColor);
@@ -207,7 +210,7 @@ int main(int argc, char** argv)
         EndMode2D();
 
         DrawText(TextFormat("Room: %s | Connected", netClient.GetRoomCode()), 10, 10, 16, BLACK);
-        DrawText(TextFormat("You are slot %d. WASD move, E pickup/revive, Q attack.", (int)mySlot), 10, 30, 16, BLACK);
+        DrawText(TextFormat("You are slot %d. WASD move, E pickup/revive, Mouse: hold to charge throw, release to throw.", (int)mySlot), 10, 30, 16, BLACK);
         DrawText("F1: Debug Menu", 10, 50, 16, DARKGRAY);
 
         debugMenu.DrawAndHandle(netClient);

@@ -611,12 +611,135 @@ void SmokeTestHotPotato() {
 
         assert(session.slots[0].player.state == PlayerState::Downed);
         assert(potato.held == true);
-        // Round-reset hands the potato to the first active (Connected) slot found in
-        // ascending order per the spec's reset loop, which keys off connection state
-        // only -- it doesn't skip the just-downed holder even though they're now Downed.
-        assert(potato.holderSlot == 0);
+        // Round-reset hands the potato to the first ALIVE active slot in ascending order.
+        // Slot 0 was just downed by the explosion, so it must be skipped -- otherwise the
+        // potato would loop back onto them and "explode" repeatedly with no effect.
+        assert(potato.holderSlot == 1);
+        assert(session.slots[1].player.state == PlayerState::Alive);
         assert(potato.catchCount == 0);
         assert(potato.explodeTimer == ComputeExplodeTimerForCatch(0));
+    }
+
+    // --- Multi-round: two full throw/catch cycles, then an explosion clears stale charge ---
+    {
+        Session session;
+        session.slots[0].state = SlotState::Connected;
+        session.slots[1].state = SlotState::Connected;
+        session.slots[2].state = SlotState::Connected;
+        session.slots[0].player = Player(Vector2{0.0f, 0.0f});
+        session.slots[1].player = Player(Vector2{100.0f, 0.0f});
+        session.slots[2].player = Player(Vector2{500.0f, 300.0f}); // far away, never catches
+
+        HazardZone hazard{ Rectangle{ 5000.0f, 5000.0f, 10.0f, 10.0f } };
+        std::vector<WorldItem> items;
+        float hazardCarry[kMaxPlayersPerSession] = {};
+        bool attack[kMaxPlayersPerSession] = {};
+        bool interact[kMaxPlayersPerSession] = {};
+        Rectangle courtBounds{ 0.0f, 0.0f, 1000.0f, 600.0f };
+
+        HotPotato potato{};
+        potato.held = true;
+        potato.holderSlot = 0;
+        potato.position = session.slots[0].player.position;
+        potato.explodeTimer = ComputeExplodeTimerForCatch(0);
+        float chargeTimer[kMaxPlayersPerSession] = {};
+        InputMsg latestInputs[kMaxPlayersPerSession] = {};
+
+        const float dt = 1.0f / 60.0f;
+        bool active[kMaxPlayersPerSession];
+
+        // Two full throw -> catch cycles: 0 -> 1, then 1 -> 0.
+        for (int cycle = 0; cycle < 2; cycle++) {
+            int thrower = potato.holderSlot;
+            assert(thrower == (cycle == 0 ? 0 : 1));
+            int receiver = (thrower == 0) ? 1 : 0;
+            float aimX = (thrower == 0) ? 1.0f : -1.0f;
+
+            latestInputs[thrower].chargingThrow = true;
+            for (int i = 0; i < 30; i++) {
+                SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
+                                     potato, chargeTimer, latestInputs, courtBounds);
+            }
+            assert(chargeTimer[thrower] > 0.0f);
+
+            latestInputs[thrower].chargingThrow = false;
+            latestInputs[thrower].releaseThrow = true;
+            latestInputs[thrower].aimDirX = aimX;
+            latestInputs[thrower].aimDirY = 0.0f;
+            SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
+                                 potato, chargeTimer, latestInputs, courtBounds);
+            latestInputs[thrower].releaseThrow = false;
+
+            bool caught = false;
+            for (int i = 0; i < 600 && !caught; i++) {
+                SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
+                                     potato, chargeTimer, latestInputs, courtBounds);
+                if (potato.held && potato.holderSlot == receiver) caught = true;
+            }
+            assert(caught);
+            assert(potato.catchCount == cycle + 1);
+        }
+
+        // Potato is now held by slot 0 (after two cycles). Slot 2 charges but never
+        // releases: that stale charge must not survive the round reset below.
+        assert(potato.holderSlot == 0);
+        chargeTimer[2] = 1.2f;
+        assert(chargeTimer[2] > 0.0f);
+
+        // Force the explosion on slot 0.
+        potato.explodeTimer = 0.01f;
+        SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
+                             potato, chargeTimer, latestInputs, courtBounds);
+
+        assert(session.slots[0].player.state == PlayerState::Downed);
+        // (a) new holder is a genuinely Alive player...
+        assert(potato.held == true);
+        assert(potato.holderSlot >= 0);
+        assert(session.slots[potato.holderSlot].player.state == PlayerState::Alive);
+        // (c) ...and it is NOT the player who was just downed.
+        assert(potato.holderSlot != 0);
+        // (b) stale charge cleared for every slot, including the never-released slot 2.
+        assert(chargeTimer[2] == 0.0f);
+        for (int i = 0; i < kMaxPlayersPerSession; i++) assert(chargeTimer[i] == 0.0f);
+    }
+
+    // --- Holder disconnects mid-hold: the potato is reclaimed, not frozen ---
+    {
+        Session session;
+        session.slots[0].state = SlotState::Connected;
+        session.slots[1].state = SlotState::Connected;
+        session.slots[0].player = Player(Vector2{0.0f, 0.0f});
+        session.slots[1].player = Player(Vector2{100.0f, 0.0f});
+
+        HazardZone hazard{ Rectangle{ 5000.0f, 5000.0f, 10.0f, 10.0f } };
+        std::vector<WorldItem> items;
+        float hazardCarry[kMaxPlayersPerSession] = {};
+        bool attack[kMaxPlayersPerSession] = {};
+        bool interact[kMaxPlayersPerSession] = {};
+        Rectangle courtBounds{ 0.0f, 0.0f, 1000.0f, 600.0f };
+
+        HotPotato potato{};
+        potato.held = true;
+        potato.holderSlot = 0;
+        potato.position = session.slots[0].player.position;
+        potato.explodeTimer = ComputeExplodeTimerForCatch(0);
+        float chargeTimer[kMaxPlayersPerSession] = {};
+        InputMsg latestInputs[kMaxPlayersPerSession] = {};
+
+        const float dt = 1.0f / 60.0f;
+        bool active[kMaxPlayersPerSession];
+
+        // Slot 0 drops out while still holding the potato.
+        session.slots[0].state = SlotState::DisconnectedPending;
+        SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
+                             potato, chargeTimer, latestInputs, courtBounds);
+
+        assert(active[0] == false);
+        assert(potato.held == true);
+        assert(potato.holderSlot == 1); // moved to the remaining Alive+active player
+        assert(session.slots[1].player.state == PlayerState::Alive);
+        assert(potato.explodeTimer < ComputeExplodeTimerForCatch(0)); // fresh timer, already ticking
+        assert(potato.explodeTimer > ComputeExplodeTimerForCatch(0) - dt - 0.001f);
     }
 
     // --- Solo mode: wall bounce reflects velocity, downs nobody ---
@@ -766,7 +889,32 @@ static void SendUnreliable(UdpSocket& socket, const std::string& ip, uint16_t po
     socket.SendTo(ip, port, packet.data(), packet.size());
 }
 
-// Pure gameplay-state mutation for one session's tick: pickup, attack, revive, hazard
+// Starts a fresh Hot Potato round: hands the potato to the first Alive, active player in
+// ascending slot order and clears every player's accumulated charge.
+static void ResetPotatoForNewRound(HotPotato& potato, Session& session, const bool* active, float* chargeTimer) {
+    HotPotato reset{};
+    for (int i = 0; i < kMaxPlayersPerSession; i++) {
+        if (active[i] && session.slots[i].player.state == PlayerState::Alive) {
+            reset.held = true;
+            reset.holderSlot = i;
+            reset.position = session.slots[i].player.position;
+            reset.explodeTimer = ComputeExplodeTimerForCatch(0);
+            break;
+        }
+    }
+    // If no Alive player exists, `reset` stays held=false/holderSlot=-1 — the potato
+    // idles rather than pinning to a corpse; it'll pick up a holder once someone respawns.
+    potato = reset;
+
+    // Clear every player's accumulated charge: a player who charged but never released
+    // before this round ended must not carry stale charge into the next round (it would
+    // produce an inflated-force "free" throw on their very first tap next time they hold).
+    for (int i = 0; i < kMaxPlayersPerSession; i++) {
+        chargeTimer[i] = 0.0f;
+    }
+}
+
+// Pure gameplay-state mutation for one session's tick: pickup, hot potato, revive
 // and timers. Deliberately free of socket/serialization concerns so it can be unit
 // tested directly (see SmokeTestSimulationTick). `active` is filled in for the caller,
 // which needs it to build the snapshot.
@@ -870,7 +1018,14 @@ static void SimulateSessionTick(Session& session, std::vector<WorldItem>& items,
         } else {
             potato.justThrown = false;
         }
-        int catcher = FindCatchTarget(potato.position, positions, active, kMaxPlayersPerSession, excludeSlot);
+        // Only active, Alive players can catch: a Downed or Dead player standing in the
+        // flight path must not become the new holder (they can't throw it, which would
+        // strand the potato). Filter here rather than changing FindCatchTarget's signature.
+        bool catchEligible[kMaxPlayersPerSession];
+        for (int i = 0; i < kMaxPlayersPerSession; i++) {
+            catchEligible[i] = active[i] && session.slots[i].player.state == PlayerState::Alive;
+        }
+        int catcher = FindCatchTarget(potato.position, positions, catchEligible, kMaxPlayersPerSession, excludeSlot);
         if (catcher != -1) {
             potato.held = true;
             potato.inFlight = false;
@@ -892,14 +1047,21 @@ static void SimulateSessionTick(Session& session, std::vector<WorldItem>& items,
                 } else if (potato.lastThrowerSlot != -1 && active[potato.lastThrowerSlot]) {
                     // Multiplayer: leaving the court downs the last thrower and starts a new round.
                     session.slots[potato.lastThrowerSlot].player.ForceDown();
-                    potato = HotPotato{};
-                    // Respawn held by a random active player (see Step 3 for the round-reset helper used at session creation; here, pick any active slot).
-                    for (int i = 0; i < kMaxPlayersPerSession; i++) {
-                        if (active[i]) { potato.held = true; potato.holderSlot = i; potato.position = session.slots[i].player.position; potato.explodeTimer = ComputeExplodeTimerForCatch(0); break; }
-                    }
+                    // Respawn held by the first Alive active player (deterministic slot
+                    // order), via the shared ResetPotatoForNewRound helper.
+                    ResetPotatoForNewRound(potato, session, active, chargeTimer);
                 }
             }
         }
+    }
+
+    // Holder vanished (disconnected, downed, or dead): reclaim the potato immediately.
+    // Must run BEFORE the explosion countdown, which also gates on active[holderSlot] —
+    // otherwise a held potato whose holder went away would freeze forever, its timer
+    // never ticking down and never expiring.
+    if (potato.held && (potato.holderSlot < 0 || !active[potato.holderSlot] ||
+                        session.slots[potato.holderSlot].player.state != PlayerState::Alive)) {
+        ResetPotatoForNewRound(potato, session, active, chargeTimer);
     }
 
     // Explosion: timer expires while held.
@@ -907,11 +1069,7 @@ static void SimulateSessionTick(Session& session, std::vector<WorldItem>& items,
         potato.explodeTimer -= dt;
         if (potato.explodeTimer <= 0.0f) {
             session.slots[potato.holderSlot].player.ForceDown();
-            HotPotato reset{};
-            for (int i = 0; i < kMaxPlayersPerSession; i++) {
-                if (active[i]) { reset.held = true; reset.holderSlot = i; reset.position = session.slots[i].player.position; reset.explodeTimer = ComputeExplodeTimerForCatch(0); break; }
-            }
-            potato = reset;
+            ResetPotatoForNewRound(potato, session, active, chargeTimer);
         }
     }
 
