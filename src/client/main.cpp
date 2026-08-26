@@ -2,9 +2,17 @@
 #include <string>
 #include "NetClient.h"
 #include "DebugMenu.h"
+#include "JuiceTests.h"
 
 int main(int argc, char** argv)
 {
+    for (int i = 1; i < argc; i++) {
+        if (std::string(argv[i]) == "--test") {
+            RunJuiceSmokeTests();
+            return 0;
+        }
+    }
+
     std::string sessionName = (argc > 1) ? argv[1] : "default";
 
     NetClient netClient;
