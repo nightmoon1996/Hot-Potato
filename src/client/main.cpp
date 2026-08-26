@@ -8,6 +8,8 @@
 #include "JuiceTests.h"
 #include "RoomMenuTests.h"
 #include "RoomMenu.h"
+#include "AimDirection.h"
+#include "AimDirectionTests.h"
 
 int main(int argc, char** argv)
 {
@@ -15,6 +17,7 @@ int main(int argc, char** argv)
         if (std::string(argv[i]) == "--test") {
             RunJuiceSmokeTests();
             RunRoomMenuSmokeTests();
+            RunAimDirectionSmokeTests();
             return 0;
         }
     }
@@ -93,12 +96,9 @@ int main(int argc, char** argv)
                 Vector2 myPos{ latestSnap.players[mySlot].posX, latestSnap.players[mySlot].posY };
                 Vector2 mouseScreen = GetMousePosition();
                 Vector2 mouseWorld = GetScreenToWorld2D(mouseScreen, camera);
-                Vector2 toMouse{ mouseWorld.x - myPos.x, mouseWorld.y - myPos.y };
-                float len = std::sqrt(toMouse.x * toMouse.x + toMouse.y * toMouse.y);
-                if (len > 0.0001f) {
-                    aimDirX = toMouse.x / len;
-                    aimDirY = toMouse.y / len;
-                }
+                Vector2 aimDir = ComputeAimDirection(myPos, mouseWorld);
+                aimDirX = aimDir.x;
+                aimDirY = aimDir.y;
             }
         }
 
