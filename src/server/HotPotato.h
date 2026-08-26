@@ -22,6 +22,7 @@ struct HotPotato {
     Vector2 velocity{0.0f, 0.0f};
     float explodeTimer = 0.0f;
     int catchCount = 0;
+    bool justThrown = false; // grace flag: excludes the thrower from catch checks until the potato first clears kCatchRadius of the thrower's position post-release, avoiding an instant self-catch while the thrower hasn't moved away yet
 };
 
 // Force scales linearly from kMinThrowForce (no charge) to kMaxThrowForce (full charge),

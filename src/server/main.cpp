@@ -18,11 +18,13 @@
 #include "Hazard.h"
 #include "Combat.h"
 #include "DebugActions.h"
+#include "HotPotato.h"
 
 // Defined above main(); forward-declared here so the smoke tests can exercise it.
 static void SimulateSessionTick(Session& session, std::vector<WorldItem>& items, HazardZone& hazard,
                                 float* hazardCarry, bool* attack, bool* interact, float dt,
-                                bool* activeOut);
+                                bool* activeOut, HotPotato& potato, float* chargeTimer,
+                                InputMsg* latestInputs, Rectangle courtBounds);
 
 void SmokeTestItems() {
     Inventory inv;
@@ -429,13 +431,18 @@ void SmokeTestSimulationTick() {
     float hazardCarry[kMaxPlayersPerSession] = { 0.0f, 0.0f, 0.0f, 0.0f };
     bool attack[kMaxPlayersPerSession] = { false, false, false, false };
     bool interact[kMaxPlayersPerSession] = { true, false, false, false };
+    HotPotato potato{};
+    float chargeTimer[kMaxPlayersPerSession] = { 0.0f, 0.0f, 0.0f, 0.0f };
+    InputMsg latestInputs[kMaxPlayersPerSession] = {};
+    Rectangle courtBounds{ 0.0f, 0.0f, 1000.0f, 600.0f };
 
     // ~2.5s at 60Hz: comfortably past Player::kChannelDuration (2.0s) but well under
     // kDownedDuration (15s), so the target can't die of the downed timer instead.
     const float dt = 1.0f / 60.0f;
     for (int tick = 0; tick < 150; tick++) {
         bool active[kMaxPlayersPerSession];
-        SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active);
+        SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
+                             potato, chargeTimer, latestInputs, courtBounds);
         assert(active[0] && active[1] && active[2]);
         assert(active[3] == false);
     }
@@ -457,12 +464,218 @@ void SmokeTestSimulationTick() {
     noPotion.slots[2].player.position = Vector2{ 110.0f, 100.0f };
     float carry2[kMaxPlayersPerSession] = { 0.0f, 0.0f, 0.0f, 0.0f };
     bool attack2[kMaxPlayersPerSession] = { false, false, false, false };
+    HotPotato potato2{};
+    float chargeTimer2[kMaxPlayersPerSession] = { 0.0f, 0.0f, 0.0f, 0.0f };
+    InputMsg latestInputs2[kMaxPlayersPerSession] = {};
     for (int tick = 0; tick < 150; tick++) {
         bool active[kMaxPlayersPerSession];
-        SimulateSessionTick(noPotion, items, hazard, carry2, attack2, interact, dt, active);
+        SimulateSessionTick(noPotion, items, hazard, carry2, attack2, interact, dt, active,
+                             potato2, chargeTimer2, latestInputs2, courtBounds);
     }
     assert(noPotion.slots[1].player.state == PlayerState::Downed);
     assert(noPotion.slots[0].player.channelTimer == 0.0f);
+}
+
+void SmokeTestHotPotato() {
+    // Force scales with charge, clamped at max
+    assert(ComputeThrowForce(0.0f) == kMinThrowForce);
+    float midForce = ComputeThrowForce(kMaxChargeDuration / 2.0f);
+    assert(midForce > kMinThrowForce && midForce < kMaxThrowForce);
+    assert(ComputeThrowForce(kMaxChargeDuration) == kMaxThrowForce);
+    assert(ComputeThrowForce(kMaxChargeDuration * 2.0f) == kMaxThrowForce); // overcharge clamps
+
+    // Timer shrinks per catch, floors correctly
+    assert(ComputeExplodeTimerForCatch(0) == kPotatoStartTimer);
+    assert(ComputeExplodeTimerForCatch(1) == kPotatoStartTimer - kPotatoTimerShrink);
+    assert(ComputeExplodeTimerForCatch(100) == kPotatoTimerFloor); // deep into the shrink, floored
+
+    // Drag reduces speed over time, never reverses direction
+    HotPotato p;
+    p.velocity = Vector2{100.0f, 0.0f};
+    float prevSpeed = 100.0f;
+    for (int i = 0; i < 60; i++) {
+        ApplyPotatoDrag(p, 1.0f / 60.0f);
+        float speed = std::sqrt(p.velocity.x * p.velocity.x + p.velocity.y * p.velocity.y);
+        assert(speed <= prevSpeed);
+        assert(p.velocity.x >= 0.0f); // never flips sign under pure drag
+        prevSpeed = speed;
+    }
+
+    // Catch detection: finds the nearest-in-range active player, skips inactive/excluded
+    Vector2 positions[4] = { {0.0f, 0.0f}, {100.0f, 100.0f}, {5.0f, 0.0f}, {0.0f, 0.0f} };
+    bool activeFlags[4] = { true, true, true, false };
+    int found = FindCatchTarget(Vector2{0.0f, 0.0f}, positions, activeFlags, 4, -1);
+    assert(found == 0); // slot 0 exactly at potato position, within radius
+    int foundExcluded = FindCatchTarget(Vector2{0.0f, 0.0f}, positions, activeFlags, 4, 0);
+    // Slot 0 excluded. Slot 2 is at (5,0); distance from (0,0) is 5.0, which IS within
+    // kCatchRadius (20.0f) -- so excluding slot 0 should still find slot 2, NOT -1.
+    assert(foundExcluded == 2);
+
+    // --- Full integration: charge + release + flight + catch, via SimulateSessionTick ---
+    {
+        Session session;
+        session.slots[0].state = SlotState::Connected;
+        session.slots[1].state = SlotState::Connected;
+        session.slots[0].player = Player(Vector2{0.0f, 0.0f});
+        session.slots[1].player = Player(Vector2{100.0f, 0.0f});
+
+        HazardZone hazard{ Rectangle{ 5000.0f, 5000.0f, 10.0f, 10.0f } };
+        std::vector<WorldItem> items;
+        float hazardCarry[kMaxPlayersPerSession] = {};
+        bool attack[kMaxPlayersPerSession] = {};
+        bool interact[kMaxPlayersPerSession] = {};
+        Rectangle courtBounds{ 0.0f, 0.0f, 1000.0f, 600.0f };
+
+        HotPotato potato{};
+        potato.held = true;
+        potato.holderSlot = 0;
+        potato.position = session.slots[0].player.position;
+        potato.explodeTimer = ComputeExplodeTimerForCatch(0);
+        float chargeTimer[kMaxPlayersPerSession] = {};
+        InputMsg latestInputs[kMaxPlayersPerSession] = {};
+
+        const float dt = 1.0f / 60.0f;
+
+        // Charge fully (slot 0 holds down chargingThrow for kMaxChargeDuration).
+        latestInputs[0].chargingThrow = true;
+        int chargeTicks = (int)(kMaxChargeDuration / dt) + 2;
+        for (int i = 0; i < chargeTicks; i++) {
+            bool active[kMaxPlayersPerSession];
+            SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
+                                 potato, chargeTimer, latestInputs, courtBounds);
+        }
+        assert(chargeTimer[0] == kMaxChargeDuration);
+        assert(potato.held == true); // still held, not yet released
+
+        // Release, aiming at +X toward slot 1.
+        latestInputs[0].chargingThrow = false;
+        latestInputs[0].releaseThrow = true;
+        latestInputs[0].aimDirX = 1.0f;
+        latestInputs[0].aimDirY = 0.0f;
+        {
+            bool active[kMaxPlayersPerSession];
+            SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
+                                 potato, chargeTimer, latestInputs, courtBounds);
+        }
+        assert(potato.held == false);
+        assert(chargeTimer[0] == 0.0f); // reset after release
+        latestInputs[0].releaseThrow = false; // one-shot event, clear like a real client would
+
+        // Simulate flight until it reaches slot 1 (at x=100) and gets caught.
+        bool caught = false;
+        for (int i = 0; i < 600 && !caught; i++) {
+            bool active[kMaxPlayersPerSession];
+            SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
+                                 potato, chargeTimer, latestInputs, courtBounds);
+            if (potato.held && potato.holderSlot == 1) caught = true;
+        }
+        assert(caught);
+        assert(potato.holderSlot == 1);
+        assert(potato.catchCount == 1);
+        // The catch and the "held potato ticks down its explode timer" logic run within
+        // the same SimulateSessionTick call on the tick of the catch, so by the time we
+        // observe it here the timer has already been decremented by one dt from the
+        // freshly-assigned ComputeExplodeTimerForCatch(1) value.
+        assert(potato.explodeTimer <= ComputeExplodeTimerForCatch(1));
+        assert(potato.explodeTimer > ComputeExplodeTimerForCatch(1) - dt - 0.001f);
+        assert(potato.explodeTimer < kPotatoStartTimer);
+    }
+
+    // --- Explosion downs the holder and resets the round ---
+    {
+        Session session;
+        session.slots[0].state = SlotState::Connected;
+        session.slots[1].state = SlotState::Connected;
+        session.slots[0].player = Player(Vector2{0.0f, 0.0f});
+        session.slots[1].player = Player(Vector2{100.0f, 0.0f});
+
+        HazardZone hazard{ Rectangle{ 5000.0f, 5000.0f, 10.0f, 10.0f } };
+        std::vector<WorldItem> items;
+        float hazardCarry[kMaxPlayersPerSession] = {};
+        bool attack[kMaxPlayersPerSession] = {};
+        bool interact[kMaxPlayersPerSession] = {};
+        Rectangle courtBounds{ 0.0f, 0.0f, 1000.0f, 600.0f };
+
+        HotPotato potato{};
+        potato.held = true;
+        potato.holderSlot = 0;
+        potato.position = session.slots[0].player.position;
+        potato.explodeTimer = 0.01f; // about to explode
+        float chargeTimer[kMaxPlayersPerSession] = {};
+        InputMsg latestInputs[kMaxPlayersPerSession] = {};
+
+        const float dt = 1.0f / 60.0f;
+        bool active[kMaxPlayersPerSession];
+        SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
+                             potato, chargeTimer, latestInputs, courtBounds);
+
+        assert(session.slots[0].player.state == PlayerState::Downed);
+        assert(potato.held == true);
+        // Round-reset hands the potato to the first active (Connected) slot found in
+        // ascending order per the spec's reset loop, which keys off connection state
+        // only -- it doesn't skip the just-downed holder even though they're now Downed.
+        assert(potato.holderSlot == 0);
+        assert(potato.catchCount == 0);
+        assert(potato.explodeTimer == ComputeExplodeTimerForCatch(0));
+    }
+
+    // --- Solo mode: wall bounce reflects velocity, downs nobody ---
+    {
+        Session session;
+        session.slots[0].state = SlotState::Connected;
+        session.slots[0].player = Player(Vector2{980.0f, 300.0f});
+        session.slots[1].state = SlotState::Empty;
+
+        HazardZone hazard{ Rectangle{ 5000.0f, 5000.0f, 10.0f, 10.0f } };
+        std::vector<WorldItem> items;
+        float hazardCarry[kMaxPlayersPerSession] = {};
+        bool attack[kMaxPlayersPerSession] = {};
+        bool interact[kMaxPlayersPerSession] = {};
+        Rectangle courtBounds{ 0.0f, 0.0f, 1000.0f, 600.0f };
+
+        HotPotato potato{};
+        potato.held = true;
+        potato.holderSlot = 0;
+        potato.position = session.slots[0].player.position;
+        potato.explodeTimer = ComputeExplodeTimerForCatch(0);
+        float chargeTimer[kMaxPlayersPerSession] = {};
+        InputMsg latestInputs[kMaxPlayersPerSession] = {};
+
+        const float dt = 1.0f / 60.0f;
+
+        // Charge fully and throw toward the right-hand wall (+X, out of bounds at x=1000).
+        latestInputs[0].chargingThrow = true;
+        int chargeTicks = (int)(kMaxChargeDuration / dt) + 2;
+        for (int i = 0; i < chargeTicks; i++) {
+            bool active[kMaxPlayersPerSession];
+            SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
+                                 potato, chargeTimer, latestInputs, courtBounds);
+        }
+        latestInputs[0].chargingThrow = false;
+        latestInputs[0].releaseThrow = true;
+        latestInputs[0].aimDirX = 1.0f;
+        latestInputs[0].aimDirY = 0.0f;
+        {
+            bool active[kMaxPlayersPerSession];
+            SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
+                                 potato, chargeTimer, latestInputs, courtBounds);
+        }
+        latestInputs[0].releaseThrow = false;
+        assert(potato.inFlight == true);
+        assert(potato.velocity.x > 0.0f);
+
+        bool bounced = false;
+        for (int i = 0; i < 60 && !bounced; i++) {
+            bool active[kMaxPlayersPerSession];
+            SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
+                                 potato, chargeTimer, latestInputs, courtBounds);
+            assert(session.slots[0].player.state != PlayerState::Downed); // never downed in solo mode
+            if (potato.velocity.x < 0.0f) bounced = true; // reflected off the +X wall
+        }
+        assert(bounced);
+        assert(potato.position.x <= courtBounds.x + courtBounds.width + 0.01f); // clamped back inside
+        assert(session.slots[0].player.state == PlayerState::Alive);
+    }
 }
 
 void RunAllSmokeTests() {
@@ -489,6 +702,9 @@ void RunAllSmokeTests() {
 
     SmokeTestSimulationTick();
     std::printf("SmokeTestSimulationTick passed\n");
+
+    SmokeTestHotPotato();
+    std::printf("SmokeTestHotPotato passed\n");
 
     std::printf("All smoke tests passed\n");
 }
@@ -556,7 +772,8 @@ static void SendUnreliable(UdpSocket& socket, const std::string& ip, uint16_t po
 // which needs it to build the snapshot.
 static void SimulateSessionTick(Session& session, std::vector<WorldItem>& items, HazardZone& hazard,
                                 float* hazardCarry, bool* attack, bool* interact, float dt,
-                                bool* activeOut) {
+                                bool* activeOut, HotPotato& potato, float* chargeTimer,
+                                InputMsg* latestInputs, Rectangle courtBounds) {
     // Only players occupying a genuinely Connected slot are simulated.
     // Empty and DisconnectedPending slots are frozen: no movement, pickup,
     // attack, revive, hazard damage, or timer updates.
@@ -587,27 +804,120 @@ static void SimulateSessionTick(Session& session, std::vector<WorldItem>& items,
         }
     }
 
-    // Attack: each active player with attackPressed hits the first active opponent
-    // found in slot order that TryAttack succeeds against (not distance-based
-    // nearest-target selection). TryAttack itself checks range/cooldown; this loop
-    // just tries each active opponent in ascending slot index and stops at the first
-    // hit, matching the spirit of the original one-target 2-player check — with more
-    // than 2 players TryAttack's own range check means only an opponent actually in
-    // range is affected, so trying all of them in order is safe and won't multi-hit
-    // since TryAttack sets a cooldown on the attacker after the first success.
-    if (attack) {
-        for (int i = 0; i < kMaxPlayersPerSession; i++) {
-            if (!active[i] || !attack[i]) continue;
-            for (int j = 0; j < kMaxPlayersPerSession; j++) {
-                if (i == j || !active[j]) continue;
-                if (TryAttack(session.slots[i].player, session.slots[j].player)) break;
-            }
-            attack[i] = false;
+    // --- Hot Potato: charge tracking, throw, flight, catch, explosion ---
+    bool soloMode = false;
+    {
+        int activeCount = 0;
+        for (int i = 0; i < kMaxPlayersPerSession; i++) if (active[i]) activeCount++;
+        soloMode = (activeCount == 1);
+    }
+
+    // Charge tracking: accumulate while held, cap at kMaxChargeDuration, reset on release.
+    for (int i = 0; i < kMaxPlayersPerSession; i++) {
+        if (!active[i]) continue;
+        if (potato.held && potato.holderSlot == i && latestInputs[i].chargingThrow) {
+            chargeTimer[i] += dt;
+            if (chargeTimer[i] > kMaxChargeDuration) chargeTimer[i] = kMaxChargeDuration;
         }
     }
 
-    for (int i = 0; i < kMaxPlayersPerSession; i++) {
-        if (active[i]) UpdateAttackCooldown(session.slots[i].player, dt);
+    // Release: only the current holder's release matters.
+    if (potato.held && potato.holderSlot >= 0 && active[potato.holderSlot] &&
+        latestInputs[potato.holderSlot].releaseThrow) {
+        int holder = potato.holderSlot;
+        float force = ComputeThrowForce(chargeTimer[holder]);
+        Vector2 aim{ latestInputs[holder].aimDirX, latestInputs[holder].aimDirY };
+        float aimLen = std::sqrt(aim.x * aim.x + aim.y * aim.y);
+        if (aimLen < 0.0001f) { aim = Vector2{1.0f, 0.0f}; aimLen = 1.0f; } // degenerate aim: default to +X
+        aim.x /= aimLen;
+        aim.y /= aimLen;
+
+        potato.velocity = Vector2{ aim.x * force, aim.y * force };
+        potato.held = false;
+        potato.inFlight = true;
+        potato.lastThrowerSlot = holder;
+        potato.holderSlot = -1;
+        potato.justThrown = true; // grace flag: exclude the thrower from catch checks while the potato is still within kCatchRadius of them post-release (see the flight block below)
+        chargeTimer[holder] = 0.0f;
+    }
+
+    // Flight: integrate position, apply drag, check catch, check bounds.
+    if (potato.inFlight) {
+        potato.position.x += potato.velocity.x * dt;
+        potato.position.y += potato.velocity.y * dt;
+        ApplyPotatoDrag(potato, dt);
+
+        Vector2 positions[kMaxPlayersPerSession];
+        for (int i = 0; i < kMaxPlayersPerSession; i++) positions[i] = session.slots[i].player.position;
+
+        // Same-tick/near-tick self-catch fallback: measured that even a full-force throw
+        // takes ~3 ticks at 60Hz to clear kCatchRadius(20) of a stationary thrower (8.3,
+        // 16.6, 24.7 units at ticks 0/1/2 post-release), so a single-tick grace flag is
+        // not enough — the thrower would still instantly re-catch their own throw one or
+        // two ticks later. Instead, exclude the thrower from the catch check for as long
+        // as the potato remains within kCatchRadius of the thrower's OWN position (i.e.
+        // hasn't actually left their immediate vicinity yet); once it clears that radius
+        // even once, clear the flag permanently so the thrower CAN catch their own throw
+        // later (e.g. after a solo-mode wall bounce).
+        int excludeSlot = -1;
+        if (potato.justThrown && potato.lastThrowerSlot != -1 && active[potato.lastThrowerSlot]) {
+            float distFromThrower = DistanceBetween2(potato.position, positions[potato.lastThrowerSlot]);
+            if (distFromThrower <= kCatchRadius) {
+                excludeSlot = potato.lastThrowerSlot;
+            } else {
+                potato.justThrown = false;
+            }
+        } else {
+            potato.justThrown = false;
+        }
+        int catcher = FindCatchTarget(potato.position, positions, active, kMaxPlayersPerSession, excludeSlot);
+        if (catcher != -1) {
+            potato.held = true;
+            potato.inFlight = false;
+            potato.holderSlot = catcher;
+            potato.velocity = Vector2{0.0f, 0.0f};
+            potato.position = positions[catcher];
+            potato.catchCount += 1;
+            potato.explodeTimer = ComputeExplodeTimerForCatch(potato.catchCount);
+        } else {
+            bool outOfBounds = potato.position.x < courtBounds.x || potato.position.x > courtBounds.x + courtBounds.width ||
+                                potato.position.y < courtBounds.y || potato.position.y > courtBounds.y + courtBounds.height;
+            if (outOfBounds) {
+                if (soloMode) {
+                    // Reflect off whichever boundary was crossed, clamp back inside.
+                    if (potato.position.x < courtBounds.x) { potato.position.x = courtBounds.x; potato.velocity.x = -potato.velocity.x; }
+                    if (potato.position.x > courtBounds.x + courtBounds.width) { potato.position.x = courtBounds.x + courtBounds.width; potato.velocity.x = -potato.velocity.x; }
+                    if (potato.position.y < courtBounds.y) { potato.position.y = courtBounds.y; potato.velocity.y = -potato.velocity.y; }
+                    if (potato.position.y > courtBounds.y + courtBounds.height) { potato.position.y = courtBounds.y + courtBounds.height; potato.velocity.y = -potato.velocity.y; }
+                } else if (potato.lastThrowerSlot != -1 && active[potato.lastThrowerSlot]) {
+                    // Multiplayer: leaving the court downs the last thrower and starts a new round.
+                    session.slots[potato.lastThrowerSlot].player.ForceDown();
+                    potato = HotPotato{};
+                    // Respawn held by a random active player (see Step 3 for the round-reset helper used at session creation; here, pick any active slot).
+                    for (int i = 0; i < kMaxPlayersPerSession; i++) {
+                        if (active[i]) { potato.held = true; potato.holderSlot = i; potato.position = session.slots[i].player.position; potato.explodeTimer = ComputeExplodeTimerForCatch(0); break; }
+                    }
+                }
+            }
+        }
+    }
+
+    // Explosion: timer expires while held.
+    if (potato.held && potato.holderSlot >= 0 && active[potato.holderSlot]) {
+        potato.explodeTimer -= dt;
+        if (potato.explodeTimer <= 0.0f) {
+            session.slots[potato.holderSlot].player.ForceDown();
+            HotPotato reset{};
+            for (int i = 0; i < kMaxPlayersPerSession; i++) {
+                if (active[i]) { reset.held = true; reset.holderSlot = i; reset.position = session.slots[i].player.position; reset.explodeTimer = ComputeExplodeTimerForCatch(0); break; }
+            }
+            potato = reset;
+        }
+    }
+
+    // Held potato tracks its holder's position each tick.
+    if (potato.held && potato.holderSlot >= 0 && active[potato.holderSlot]) {
+        potato.position = session.slots[potato.holderSlot].player.position;
     }
 
     // Revive: each active reviver channels against AT MOST ONE target per tick — the
@@ -634,10 +944,6 @@ static void SimulateSessionTick(Session& session, std::vector<WorldItem>& items,
     }
 
     for (int i = 0; i < kMaxPlayersPerSession; i++) {
-        if (active[i]) ApplyHazardDamage(hazard, session.slots[i].player, dt, hazardCarry[i]);
-    }
-
-    for (int i = 0; i < kMaxPlayersPerSession; i++) {
         if (active[i]) session.slots[i].player.UpdateTimers(dt);
     }
 }
@@ -657,7 +963,8 @@ int main(int argc, char** argv) {
     std::printf("Server listening on UDP port %d\n", (int)kServerPort);
 
     SessionManager sessionManager;
-    HazardZone hazard{ Rectangle{450.0f, 200.0f, 100.0f, 200.0f} };
+    HazardZone hazard{ Rectangle{450.0f, 200.0f, 100.0f, 200.0f} }; // retained per Global Constraints; not applied to Hot Potato sessions this phase
+    Rectangle courtBounds{ 0.0f, 0.0f, 1000.0f, 600.0f };
 
     // Track world items and unreliable-send sequence counters per session name,
     // since Session itself only holds player slots.
@@ -666,6 +973,9 @@ int main(int argc, char** argv) {
     std::map<std::string, uint32_t> sessionSnapshotSeq;
     std::map<std::string, bool[kMaxPlayersPerSession]> pendingAttack;
     std::map<std::string, bool[kMaxPlayersPerSession]> pendingInteract;
+    std::map<std::string, HotPotato> sessionPotato;
+    std::map<std::string, float[kMaxPlayersPerSession]> sessionChargeTimer;
+    std::map<std::string, InputMsg[kMaxPlayersPerSession]> sessionLatestInput;
 
     const double tickInterval = 1.0 / 60.0;
     double lastTick = NowSeconds();
@@ -720,8 +1030,16 @@ int main(int argc, char** argv) {
                                 };
                                 for (int i = 0; i < kMaxPlayersPerSession; i++) {
                                     sessionHazardCarry[outcome.roomCode][i] = 0.0f;
+                                    sessionChargeTimer[outcome.roomCode][i] = 0.0f;
+                                    sessionLatestInput[outcome.roomCode][i] = InputMsg{};
                                 }
                                 sessionSnapshotSeq[outcome.roomCode] = 1;
+                                HotPotato freshPotato{};
+                                freshPotato.held = true;
+                                freshPotato.holderSlot = 0; // slot 0 (the room creator) always starts holding; simplest deterministic choice for this phase
+                                freshPotato.position = session->slots[0].player.position;
+                                freshPotato.explodeTimer = ComputeExplodeTimerForCatch(0);
+                                sessionPotato[outcome.roomCode] = freshPotato;
                             }
 
                             WelcomeMsg welcome{
@@ -755,6 +1073,7 @@ int main(int argc, char** argv) {
                                 }
                                 pendingAttack[loc.sessionName][loc.slotIndex] = input.attackPressed;
                                 pendingInteract[loc.sessionName][loc.slotIndex] = input.interactHeld;
+                                sessionLatestInput[loc.sessionName][loc.slotIndex] = input;
                             }
                         } else if (header.channel == 1 && type == MessageType::Ack) {
                             AckMsg ack{};
@@ -809,7 +1128,11 @@ int main(int argc, char** argv) {
                 bool* interact = pendingInteract.count(sessionEntry) ? pendingInteract[sessionEntry] : nullptr;
 
                 bool active[kMaxPlayersPerSession];
-                SimulateSessionTick(*session, items, hazard, hazardCarry, attack, interact, dt, active);
+                HotPotato& potato = sessionPotato[sessionEntry];
+                float* chargeTimer = sessionChargeTimer[sessionEntry];
+                InputMsg* latestInputs = sessionLatestInput.count(sessionEntry) ? sessionLatestInput[sessionEntry] : nullptr;
+                if (!latestInputs) continue; // session exists but no input map yet (shouldn't happen once creation-time init runs, but guards a null deref)
+                SimulateSessionTick(*session, items, hazard, hazardCarry, attack, interact, dt, active, potato, chargeTimer, latestInputs, courtBounds);
 
                 // state value 3 = "absent" (slot not Connected): not a real PlayerState,
                 // repurposed on the wire so an inactive slot renders as not-present
@@ -829,6 +1152,7 @@ int main(int argc, char** argv) {
                 snap.hazardY = hazard.bounds.y;
                 snap.hazardW = hazard.bounds.width;
                 snap.hazardH = hazard.bounds.height;
+                snap.potato = PotatoSnapshot{ potato.position.x, potato.position.y, potato.held, potato.inFlight, potato.holderSlot, potato.explodeTimer };
 
                 std::vector<uint8_t> snapBytes;
                 SerializeStruct(snap, snapBytes);
