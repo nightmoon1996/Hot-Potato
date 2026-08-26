@@ -89,6 +89,7 @@ struct InputMsg {
     bool releaseThrow;
     float aimDirX;
     float aimDirY;
+    bool dashPressed;
 };
 
 struct PlayerSnapshot {
