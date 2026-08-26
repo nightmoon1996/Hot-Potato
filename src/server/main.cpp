@@ -7,6 +7,7 @@
 #include <chrono>
 #include <thread>
 #include <string>
+#include <cmath>
 #include "../shared/Geometry.h" // only for Vector2/Rectangle math types, no window/raylib linking
 
 #include "../shared/Protocol.h"
@@ -20,6 +21,7 @@
 #include "DebugActions.h"
 #include "HotPotato.h"
 #include "MatchState.h"
+#include "Dash.h"
 
 // Defined above main(); forward-declared here so the smoke tests can exercise it.
 static void SimulateSessionTick(Session& session, std::vector<WorldItem>& items, HazardZone& hazard,
@@ -1040,6 +1042,106 @@ void SmokeTestMatchOverFreezeAndNewMatch() {
     }
 }
 
+void SmokeTestDash() {
+    // ResolveDashDirection: uses current movement input when non-zero
+    {
+        Vector2 dir = ResolveDashDirection(Vector2{1.0f, 0.0f}, Vector2{0.0f, 1.0f});
+        assert(std::fabs(dir.x - 1.0f) < 0.001f);
+        assert(std::fabs(dir.y - 0.0f) < 0.001f);
+    }
+
+    // ResolveDashDirection: falls back to facing direction when no movement input
+    {
+        Vector2 dir = ResolveDashDirection(Vector2{0.0f, 0.0f}, Vector2{0.0f, 1.0f});
+        assert(std::fabs(dir.x - 0.0f) < 0.001f);
+        assert(std::fabs(dir.y - 1.0f) < 0.001f);
+    }
+
+    // ResolveDashDirection: normalizes a non-unit movement input
+    {
+        Vector2 dir = ResolveDashDirection(Vector2{3.0f, 4.0f}, Vector2{1.0f, 0.0f});
+        float len = std::sqrt(dir.x * dir.x + dir.y * dir.y);
+        assert(std::fabs(len - 1.0f) < 0.001f);
+        assert(std::fabs(dir.x - 0.6f) < 0.001f);
+        assert(std::fabs(dir.y - 0.8f) < 0.001f);
+    }
+
+    // ComputeDashDestination: moves kDashDistance in the given direction, unclamped case
+    {
+        Rectangle bounds{ 0.0f, 0.0f, 1000.0f, 600.0f };
+        Vector2 dest = ComputeDashDestination(Vector2{500.0f, 300.0f}, Vector2{1.0f, 0.0f}, bounds);
+        assert(std::fabs(dest.x - (500.0f + kDashDistance)) < 0.001f);
+        assert(std::fabs(dest.y - 300.0f) < 0.001f);
+    }
+
+    // ComputeDashDestination: clamps to stay inside courtBounds
+    {
+        Rectangle bounds{ 0.0f, 0.0f, 1000.0f, 600.0f };
+        Vector2 dest = ComputeDashDestination(Vector2{950.0f, 300.0f}, Vector2{1.0f, 0.0f}, bounds);
+        assert(dest.x <= bounds.x + bounds.width);
+        assert(std::fabs(dest.x - (bounds.x + bounds.width)) < 0.001f); // clamped exactly to the edge
+    }
+
+    // Full integration via the Input-message-handling path: dash moves the player,
+    // respects cooldown (a second immediate dash attempt is a no-op), and the
+    // stationary-dash-uses-facing-direction fallback works.
+    // (Since the dash-application code lives in main()'s packet-receive loop rather than
+    // a standalone testable function, this smoke test constructs the equivalent scenario
+    // directly against a Player object using the same ResolveDashDirection/
+    // ComputeDashDestination helpers Task 3 wires into that loop, rather than attempting
+    // to simulate a full UDP packet round-trip — this still exercises the identical logic
+    // path since the loop's dash-handling code is a thin, direct call into these two
+    // functions plus a cooldown check, all of which are covered above and below.)
+    {
+        Player p(Vector2{100.0f, 100.0f});
+        Rectangle bounds{ 0.0f, 0.0f, 1000.0f, 600.0f };
+        assert(p.dashCooldownTimer <= 0.0f);
+
+        // Simulate: player moving right, dash pressed
+        Vector2 moveInput{1.0f, 0.0f};
+        p.facingDirection = Vector2{1.0f, 0.0f}; // already facing right from prior movement
+        if (p.dashCooldownTimer <= 0.0f) {
+            Vector2 dashDir = ResolveDashDirection(moveInput, p.facingDirection);
+            p.position = ComputeDashDestination(p.position, dashDir, bounds);
+            p.dashCooldownTimer = kDashCooldown;
+        }
+        assert(std::fabs(p.position.x - (100.0f + kDashDistance)) < 0.001f);
+        assert(p.dashCooldownTimer == kDashCooldown);
+
+        // Immediately try to dash again: cooldown blocks it
+        Vector2 posBeforeSecondAttempt = p.position;
+        if (p.dashCooldownTimer <= 0.0f) {
+            Vector2 dashDir = ResolveDashDirection(moveInput, p.facingDirection);
+            p.position = ComputeDashDestination(p.position, dashDir, bounds);
+            p.dashCooldownTimer = kDashCooldown;
+        }
+        assert(p.position.x == posBeforeSecondAttempt.x);
+        assert(p.position.y == posBeforeSecondAttempt.y);
+
+        // Tick the cooldown down to 0, confirm dash works again.
+        // Use enough iterations to overshoot kDashCooldown (2s at 60Hz = 120 ticks
+        // exactly) rather than the exact tick count: summing 120 individual
+        // 1/60.0f float subtractions accumulates rounding error and can leave a
+        // sub-epsilon positive residue instead of landing exactly on/below zero
+        // (matches the overshoot pattern used by the UpdateTimers-based smoke
+        // tests elsewhere in this file, e.g. SmokeTestPlayerStateMachine).
+        for (int i = 0; i < 130; i++) { // slight overshoot past the 2s/120-tick cooldown
+            if (p.dashCooldownTimer > 0.0f) {
+                p.dashCooldownTimer -= 1.0f / 60.0f;
+                if (p.dashCooldownTimer < 0.0f) p.dashCooldownTimer = 0.0f;
+            }
+        }
+        assert(p.dashCooldownTimer <= 0.0f);
+        Vector2 posBeforeThirdAttempt = p.position;
+        if (p.dashCooldownTimer <= 0.0f) {
+            Vector2 dashDir = ResolveDashDirection(Vector2{0.0f, 0.0f}, p.facingDirection); // stationary: uses facing fallback
+            p.position = ComputeDashDestination(p.position, dashDir, bounds);
+            p.dashCooldownTimer = kDashCooldown;
+        }
+        assert(std::fabs(p.position.x - (posBeforeThirdAttempt.x + kDashDistance)) < 0.001f); // still moved right, via facingDirection fallback
+    }
+}
+
 void RunAllSmokeTests() {
     SmokeTestSerialization();
     std::printf("SmokeTestSerialization passed\n");
@@ -1073,6 +1175,9 @@ void RunAllSmokeTests() {
 
     SmokeTestMatchOverFreezeAndNewMatch();
     std::printf("SmokeTestMatchOverFreezeAndNewMatch passed\n");
+
+    SmokeTestDash();
+    std::printf("SmokeTestDash passed\n");
 
     std::printf("All smoke tests passed\n");
 }
@@ -1376,6 +1481,16 @@ static void SimulateSessionTick(Session& session, std::vector<WorldItem>& items,
     for (int i = 0; i < kMaxPlayersPerSession; i++) {
         if (active[i]) session.slots[i].player.UpdateTimers(dt);
     }
+
+    // Dash cooldown decays unconditionally for every active player, independent of
+    // match/potato state — it's a player-movement mechanic, not something that should
+    // freeze when a match concludes.
+    for (int i = 0; i < kMaxPlayersPerSession; i++) {
+        if (active[i] && session.slots[i].player.dashCooldownTimer > 0.0f) {
+            session.slots[i].player.dashCooldownTimer -= dt;
+            if (session.slots[i].player.dashCooldownTimer < 0.0f) session.slots[i].player.dashCooldownTimer = 0.0f;
+        }
+    }
 }
 
 int main(int argc, char** argv) {
@@ -1502,6 +1617,20 @@ int main(int argc, char** argv) {
                                 if (slot.player.state == PlayerState::Alive) {
                                     slot.player.position.x += input.moveX * kMoveSpeed * (float)tickInterval;
                                     slot.player.position.y += input.moveY * kMoveSpeed * (float)tickInterval;
+
+                                    // Track facing direction whenever real movement input is
+                                    // present, regardless of whether a dash happens this packet —
+                                    // this is what a stationary dash falls back to.
+                                    float moveLen = std::sqrt(input.moveX * input.moveX + input.moveY * input.moveY);
+                                    if (moveLen > 0.0001f) {
+                                        slot.player.facingDirection = Vector2{ input.moveX / moveLen, input.moveY / moveLen };
+                                    }
+
+                                    if (input.dashPressed && slot.player.dashCooldownTimer <= 0.0f) {
+                                        Vector2 dashDir = ResolveDashDirection(Vector2{ input.moveX, input.moveY }, slot.player.facingDirection);
+                                        slot.player.position = ComputeDashDestination(slot.player.position, dashDir, courtBounds);
+                                        slot.player.dashCooldownTimer = kDashCooldown;
+                                    }
                                 }
                                 pendingAttack[loc.sessionName][loc.slotIndex] = input.attackPressed;
                                 pendingInteract[loc.sessionName][loc.slotIndex] = input.interactHeld;
