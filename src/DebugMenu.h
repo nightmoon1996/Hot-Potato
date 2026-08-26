@@ -21,7 +21,7 @@ public:
             return;
         }
 
-        DrawRectangle(0, 0, 1000, 600, Fade(BLACK, 0.5f));
+        DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Fade(BLACK, 0.5f));
         DrawRectangle(300, 150, 400, 260, RAYWHITE);
         DrawText("DEBUG MENU (F1 to close)", 320, 160, 16, BLACK);
 

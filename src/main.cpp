@@ -223,12 +223,19 @@ int main()
         }
 
         // --- Input: pickup (interact key, only when Alive) ---
-        if (p1.state == PlayerState::Alive && IsKeyPressed(KEY_E)) {
+        // Revive takes priority over pickup when both would apply to the same key press:
+        // if the other player is Downed and within revive range, skip pickup this frame.
+        bool p1CanRevive = p2.state == PlayerState::Downed &&
+            DistanceBetween(p1.position, p2.position) <= reviveRange;
+        bool p2CanRevive = p1.state == PlayerState::Downed &&
+            DistanceBetween(p2.position, p1.position) <= reviveRange;
+
+        if (p1.state == PlayerState::Alive && IsKeyPressed(KEY_E) && !p1CanRevive) {
             for (auto& item : worldItems) {
                 if (TryPickup(item, p1.position, p1.inventory, pickupRadius)) break;
             }
         }
-        if (p2.state == PlayerState::Alive && IsKeyPressed(KEY_RIGHT_CONTROL)) {
+        if (p2.state == PlayerState::Alive && IsKeyPressed(KEY_RIGHT_CONTROL) && !p2CanRevive) {
             for (auto& item : worldItems) {
                 if (TryPickup(item, p2.position, p2.inventory, pickupRadius)) break;
             }
@@ -255,6 +262,10 @@ int main()
         ApplyHazardDamage(hazard, p2, dt, p2HazardCarry);
 
         // --- State timers (downed -> dead -> respawn) ---
+        // Must run after UpdateRevive: if a revive channel completes the same frame a
+        // downed player's downedTimer would expire, the revive (already applied above,
+        // setting the player back to Alive) must win. UpdateTimers only acts on players
+        // still in the Downed state, so it correctly no-ops for a player just revived.
         p1.UpdateTimers(dt);
         p2.UpdateTimers(dt);
 
