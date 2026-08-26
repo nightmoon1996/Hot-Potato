@@ -30,6 +30,10 @@ public:
                                  const std::string& clientIp, uint16_t clientPort, double nowSeconds) {
         // Case 4: reconnect token matches a disconnected slot
         if (reconnectToken != 0) {
+            // Scan all sessions: a client that created its room sends an empty sessionName
+            // on reconnect (it never learns a "name" distinct from its generated code in
+            // the way a joiner does), so the token is the only reliable key here. Tokens
+            // are globally unique via GenerateToken().
             for (auto& entry : sessions) {
                 int slotIndex = entry.second.FindDisconnectedSlotByToken(reconnectToken);
                 if (slotIndex != -1) {
@@ -60,7 +64,9 @@ public:
             return { ConnectResult::Created, 0, token, RejectReason::SessionFull, code };
         }
 
-        // Join path: non-empty name must already exist
+        // Join path: non-empty name must already exist. This is a deliberate change
+        // from the old behavior (any non-empty name silently created a session) —
+        // only an explicit empty-name create request may create a room now.
         auto it = sessions.find(sessionName);
         if (it == sessions.end()) {
             return { ConnectResult::Rejected, -1, 0, RejectReason::RoomNotFound, "" };

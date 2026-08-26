@@ -1,6 +1,7 @@
 #include <raylib-cpp.hpp>
 #include <string>
 #include <cmath>
+#include <cstdint>
 #include "NetClient.h"
 #include "DebugMenu.h"
 #include "Juice.h"
@@ -18,6 +19,9 @@ int main(int argc, char** argv)
         }
     }
 
+    std::string serverIp = (argc > 1) ? argv[1] : "127.0.0.1";
+    uint16_t serverPort = 7777;
+
     int screenWidth = 1000;
     int screenHeight = 600;
     raylib::Window w(screenWidth, screenHeight, "Maxion Test - Client");
@@ -27,7 +31,7 @@ int main(int argc, char** argv)
     RoomMenu roomMenu;
 
     while (!w.ShouldClose() && !roomMenu.IsDone()) {
-        roomMenu.HandleInput(netClient);
+        roomMenu.HandleInput(netClient, serverIp, serverPort);
 
         BeginDrawing();
         ClearBackground(RAYWHITE);
@@ -35,8 +39,8 @@ int main(int argc, char** argv)
         EndDrawing();
     }
 
-    if (w.ShouldClose()) {
-        return 0;
+    if (!roomMenu.IsDone()) {
+        return 0; // window was closed before connecting
     }
 
     TraceLog(LOG_INFO, "Connected as player slot %d", (int)netClient.GetPlayerSlot());

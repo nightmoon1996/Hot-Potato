@@ -306,6 +306,18 @@ void SmokeTestSessionManager() {
     assert(outcome4.sessionToken == outcome1.sessionToken);
     assert(session->slots[0].state == SlotState::Connected);
 
+    // Reconnect with an EMPTY session name (what a create-path client actually
+    // sends, since NetClient::Reconnect() resends whatever name was originally
+    // used to connect — a room creator's original name was ""): must resume via
+    // token lookup (which scans all sessions), not fall through to the
+    // empty-name create path and spawn an orphan room.
+    session->slots[0].lastPacketAtSeconds = 0.0;
+    session->CheckTimeouts(60.0);
+    ConnectOutcome outcomeEmptyReconnect = manager.HandleConnect("", outcome1.sessionToken, "127.0.0.1", 5005, 61.0);
+    assert(outcomeEmptyReconnect.result == ConnectResult::Reconnected);
+    assert(outcomeEmptyReconnect.roomCode == game1Code);
+    assert(session->slots[0].state == SlotState::Connected);
+
     // Case 5: reconnect with a token that doesn't match anything falls back to fresh-connect logic
     // (session is now full again after the reconnect above, so this should be rejected)
     ConnectOutcome outcome5 = manager.HandleConnect(game1Code, 999999, "127.0.0.1", 5004, 61.0);

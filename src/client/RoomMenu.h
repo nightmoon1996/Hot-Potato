@@ -2,6 +2,7 @@
 
 #include <raylib-cpp.hpp>
 #include <string>
+#include <cstdint>
 #include "NetClient.h"
 
 class RoomMenu {
@@ -29,7 +30,7 @@ public:
         }
     }
 
-    void HandleInput(NetClient& netClient) {
+    void HandleInput(NetClient& netClient, const std::string& serverIp, uint16_t serverPort) {
         // Digit-only text entry into codeInput, capped at 6 characters
         int key = GetCharPressed();
         while (key > 0) {
@@ -46,14 +47,14 @@ public:
 
         if (createClicked) {
             errorMessage.clear();
-            if (netClient.CreateRoom("127.0.0.1", 7777)) {
+            if (netClient.CreateRoom(serverIp, serverPort)) {
                 done = true;
             } else {
                 errorMessage = RejectReasonToMessage(netClient.GetLastRejectReason());
             }
         } else if (joinClicked && codeInput.size() == 6) {
             errorMessage.clear();
-            if (netClient.JoinRoom("127.0.0.1", 7777, codeInput)) {
+            if (netClient.JoinRoom(serverIp, serverPort, codeInput)) {
                 done = true;
             } else {
                 errorMessage = RejectReasonToMessage(netClient.GetLastRejectReason());
