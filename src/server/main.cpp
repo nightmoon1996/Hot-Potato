@@ -19,12 +19,13 @@
 #include "Combat.h"
 #include "DebugActions.h"
 #include "HotPotato.h"
+#include "MatchState.h"
 
 // Defined above main(); forward-declared here so the smoke tests can exercise it.
 static void SimulateSessionTick(Session& session, std::vector<WorldItem>& items, HazardZone& hazard,
                                 float* hazardCarry, bool* attack, bool* interact, float dt,
                                 bool* activeOut, HotPotato& potato, float* chargeTimer,
-                                InputMsg* latestInputs, Rectangle courtBounds);
+                                InputMsg* latestInputs, Rectangle courtBounds, MatchState& match);
 
 void SmokeTestItems() {
     Inventory inv;
@@ -435,6 +436,7 @@ void SmokeTestSimulationTick() {
     float chargeTimer[kMaxPlayersPerSession] = { 0.0f, 0.0f, 0.0f, 0.0f };
     InputMsg latestInputs[kMaxPlayersPerSession] = {};
     Rectangle courtBounds{ 0.0f, 0.0f, 1000.0f, 600.0f };
+    MatchState match{};
 
     // ~2.5s at 60Hz: comfortably past Player::kChannelDuration (2.0s) but well under
     // kDownedDuration (15s), so the target can't die of the downed timer instead.
@@ -442,7 +444,7 @@ void SmokeTestSimulationTick() {
     for (int tick = 0; tick < 150; tick++) {
         bool active[kMaxPlayersPerSession];
         SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
-                             potato, chargeTimer, latestInputs, courtBounds);
+                             potato, chargeTimer, latestInputs, courtBounds, match);
         assert(active[0] && active[1] && active[2]);
         assert(active[3] == false);
     }
@@ -467,10 +469,11 @@ void SmokeTestSimulationTick() {
     HotPotato potato2{};
     float chargeTimer2[kMaxPlayersPerSession] = { 0.0f, 0.0f, 0.0f, 0.0f };
     InputMsg latestInputs2[kMaxPlayersPerSession] = {};
+    MatchState match2{};
     for (int tick = 0; tick < 150; tick++) {
         bool active[kMaxPlayersPerSession];
         SimulateSessionTick(noPotion, items, hazard, carry2, attack2, interact, dt, active,
-                             potato2, chargeTimer2, latestInputs2, courtBounds);
+                             potato2, chargeTimer2, latestInputs2, courtBounds, match2);
     }
     assert(noPotion.slots[1].player.state == PlayerState::Downed);
     assert(noPotion.slots[0].player.channelTimer == 0.0f);
@@ -533,6 +536,7 @@ void SmokeTestHotPotato() {
         potato.explodeTimer = ComputeExplodeTimerForCatch(0);
         float chargeTimer[kMaxPlayersPerSession] = {};
         InputMsg latestInputs[kMaxPlayersPerSession] = {};
+        MatchState match{};
 
         const float dt = 1.0f / 60.0f;
 
@@ -542,7 +546,7 @@ void SmokeTestHotPotato() {
         for (int i = 0; i < chargeTicks; i++) {
             bool active[kMaxPlayersPerSession];
             SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
-                                 potato, chargeTimer, latestInputs, courtBounds);
+                                 potato, chargeTimer, latestInputs, courtBounds, match);
         }
         assert(chargeTimer[0] == kMaxChargeDuration);
         assert(potato.held == true); // still held, not yet released
@@ -555,7 +559,7 @@ void SmokeTestHotPotato() {
         {
             bool active[kMaxPlayersPerSession];
             SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
-                                 potato, chargeTimer, latestInputs, courtBounds);
+                                 potato, chargeTimer, latestInputs, courtBounds, match);
         }
         assert(potato.held == false);
         assert(chargeTimer[0] == 0.0f); // reset after release
@@ -566,7 +570,7 @@ void SmokeTestHotPotato() {
         for (int i = 0; i < 600 && !caught; i++) {
             bool active[kMaxPlayersPerSession];
             SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
-                                 potato, chargeTimer, latestInputs, courtBounds);
+                                 potato, chargeTimer, latestInputs, courtBounds, match);
             if (potato.held && potato.holderSlot == 1) caught = true;
         }
         assert(caught);
@@ -603,11 +607,12 @@ void SmokeTestHotPotato() {
         potato.explodeTimer = 0.01f; // about to explode
         float chargeTimer[kMaxPlayersPerSession] = {};
         InputMsg latestInputs[kMaxPlayersPerSession] = {};
+        MatchState match{};
 
         const float dt = 1.0f / 60.0f;
         bool active[kMaxPlayersPerSession];
         SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
-                             potato, chargeTimer, latestInputs, courtBounds);
+                             potato, chargeTimer, latestInputs, courtBounds, match);
 
         assert(session.slots[0].player.state == PlayerState::Downed);
         assert(potato.held == true);
@@ -618,6 +623,15 @@ void SmokeTestHotPotato() {
         assert(session.slots[1].player.state == PlayerState::Alive);
         assert(potato.catchCount == 0);
         assert(potato.explodeTimer == ComputeExplodeTimerForCatch(0));
+
+        // Real end-to-end wiring check: the explosion round-end above must have scored
+        // via ScoreRoundEnd (crediting every active, non-exploded player) and advanced
+        // the round via AdvanceRoundOrEndMatch, entirely through SimulateSessionTick --
+        // not just via the pure MatchState.h functions tested in isolation elsewhere.
+        assert(match.roundScore[0] == 0); // slot 0 exploded: excluded from scoring
+        assert(match.roundScore[1] == 1); // slot 1 was active and not excluded: scored
+        assert(match.roundNumber == 2); // AdvanceRoundOrEndMatch was invoked
+        assert(match.matchOver == false);
     }
 
     // --- Multi-round: two full throw/catch cycles, then an explosion clears stale charge ---
@@ -644,6 +658,7 @@ void SmokeTestHotPotato() {
         potato.explodeTimer = ComputeExplodeTimerForCatch(0);
         float chargeTimer[kMaxPlayersPerSession] = {};
         InputMsg latestInputs[kMaxPlayersPerSession] = {};
+        MatchState match{};
 
         const float dt = 1.0f / 60.0f;
         bool active[kMaxPlayersPerSession];
@@ -658,7 +673,7 @@ void SmokeTestHotPotato() {
             latestInputs[thrower].chargingThrow = true;
             for (int i = 0; i < 30; i++) {
                 SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
-                                     potato, chargeTimer, latestInputs, courtBounds);
+                                     potato, chargeTimer, latestInputs, courtBounds, match);
             }
             assert(chargeTimer[thrower] > 0.0f);
 
@@ -667,13 +682,13 @@ void SmokeTestHotPotato() {
             latestInputs[thrower].aimDirX = aimX;
             latestInputs[thrower].aimDirY = 0.0f;
             SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
-                                 potato, chargeTimer, latestInputs, courtBounds);
+                                 potato, chargeTimer, latestInputs, courtBounds, match);
             latestInputs[thrower].releaseThrow = false;
 
             bool caught = false;
             for (int i = 0; i < 600 && !caught; i++) {
                 SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
-                                     potato, chargeTimer, latestInputs, courtBounds);
+                                     potato, chargeTimer, latestInputs, courtBounds, match);
                 if (potato.held && potato.holderSlot == receiver) caught = true;
             }
             assert(caught);
@@ -689,7 +704,7 @@ void SmokeTestHotPotato() {
         // Force the explosion on slot 0.
         potato.explodeTimer = 0.01f;
         SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
-                             potato, chargeTimer, latestInputs, courtBounds);
+                             potato, chargeTimer, latestInputs, courtBounds, match);
 
         assert(session.slots[0].player.state == PlayerState::Downed);
         // (a) new holder is a genuinely Alive player...
@@ -725,6 +740,7 @@ void SmokeTestHotPotato() {
         potato.explodeTimer = ComputeExplodeTimerForCatch(0);
         float chargeTimer[kMaxPlayersPerSession] = {};
         InputMsg latestInputs[kMaxPlayersPerSession] = {};
+        MatchState match{};
 
         const float dt = 1.0f / 60.0f;
         bool active[kMaxPlayersPerSession];
@@ -732,7 +748,7 @@ void SmokeTestHotPotato() {
         // Slot 0 drops out while still holding the potato.
         session.slots[0].state = SlotState::DisconnectedPending;
         SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
-                             potato, chargeTimer, latestInputs, courtBounds);
+                             potato, chargeTimer, latestInputs, courtBounds, match);
 
         assert(active[0] == false);
         assert(potato.held == true);
@@ -740,6 +756,11 @@ void SmokeTestHotPotato() {
         assert(session.slots[1].player.state == PlayerState::Alive);
         assert(potato.explodeTimer < ComputeExplodeTimerForCatch(0)); // fresh timer, already ticking
         assert(potato.explodeTimer > ComputeExplodeTimerForCatch(0) - dt - 0.001f);
+        // Holder-vanished reclaim is NOT a scored round-end: no round score changes, no
+        // round advance.
+        assert(match.roundScore[0] == 0);
+        assert(match.roundScore[1] == 0);
+        assert(match.roundNumber == 1);
     }
 
     // --- Solo mode: wall bounce reflects velocity, downs nobody ---
@@ -763,6 +784,7 @@ void SmokeTestHotPotato() {
         potato.explodeTimer = ComputeExplodeTimerForCatch(0);
         float chargeTimer[kMaxPlayersPerSession] = {};
         InputMsg latestInputs[kMaxPlayersPerSession] = {};
+        MatchState match{};
 
         const float dt = 1.0f / 60.0f;
 
@@ -772,7 +794,7 @@ void SmokeTestHotPotato() {
         for (int i = 0; i < chargeTicks; i++) {
             bool active[kMaxPlayersPerSession];
             SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
-                                 potato, chargeTimer, latestInputs, courtBounds);
+                                 potato, chargeTimer, latestInputs, courtBounds, match);
         }
         latestInputs[0].chargingThrow = false;
         latestInputs[0].releaseThrow = true;
@@ -781,7 +803,7 @@ void SmokeTestHotPotato() {
         {
             bool active[kMaxPlayersPerSession];
             SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
-                                 potato, chargeTimer, latestInputs, courtBounds);
+                                 potato, chargeTimer, latestInputs, courtBounds, match);
         }
         latestInputs[0].releaseThrow = false;
         assert(potato.inFlight == true);
@@ -791,13 +813,89 @@ void SmokeTestHotPotato() {
         for (int i = 0; i < 60 && !bounced; i++) {
             bool active[kMaxPlayersPerSession];
             SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
-                                 potato, chargeTimer, latestInputs, courtBounds);
+                                 potato, chargeTimer, latestInputs, courtBounds, match);
             assert(session.slots[0].player.state != PlayerState::Downed); // never downed in solo mode
             if (potato.velocity.x < 0.0f) bounced = true; // reflected off the +X wall
         }
         assert(bounced);
         assert(potato.position.x <= courtBounds.x + courtBounds.width + 0.01f); // clamped back inside
         assert(session.slots[0].player.state == PlayerState::Alive);
+    }
+}
+
+void SmokeTestMatchState() {
+    // ScoreRoundEnd credits every active player except the excluded one
+    {
+        MatchState match{};
+        bool active[kMaxPlayersPerSession] = { true, true, true, false };
+        ScoreRoundEnd(match, active, 1); // slot 1 excluded (the round's cause)
+        assert(match.roundScore[0] == 1);
+        assert(match.roundScore[1] == 0);
+        assert(match.roundScore[2] == 1);
+        assert(match.roundScore[3] == 0); // inactive, untouched
+    }
+
+    // 3 rounds played, clear single winner
+    {
+        MatchState match{};
+        bool active[kMaxPlayersPerSession] = { true, true, false, false };
+        // Round 1: slot 1 is the cause, slot 0 scores
+        ScoreRoundEnd(match, active, 1);
+        AdvanceRoundOrEndMatch(match, active);
+        assert(match.roundNumber == 2);
+        assert(match.matchOver == false);
+        // Round 2: slot 1 is the cause again, slot 0 scores again
+        ScoreRoundEnd(match, active, 1);
+        AdvanceRoundOrEndMatch(match, active);
+        assert(match.roundNumber == 3);
+        // Round 3: slot 1 is the cause a third time, slot 0 scores a third time
+        ScoreRoundEnd(match, active, 1);
+        AdvanceRoundOrEndMatch(match, active);
+        assert(match.matchOver == true);
+        assert(match.winnerSlot == 0);
+        assert(match.roundScore[0] == 3);
+        assert(match.roundScore[1] == 0);
+    }
+
+    // Tie after 3 rounds triggers a tiebreak, which resolves on the next round-end
+    {
+        MatchState match{};
+        bool active[kMaxPlayersPerSession] = { true, true, true, false };
+        // Round 1: slot 2 is the cause, slots 0 and 1 both score
+        ScoreRoundEnd(match, active, 2);
+        AdvanceRoundOrEndMatch(match, active);
+        // Round 2: slot 2 is the cause again, slots 0 and 1 both score again
+        ScoreRoundEnd(match, active, 2);
+        AdvanceRoundOrEndMatch(match, active);
+        // Round 3: slot 2 is the cause a third time, slots 0 and 1 both score a third time
+        ScoreRoundEnd(match, active, 2);
+        AdvanceRoundOrEndMatch(match, active);
+        // Slots 0 and 1 are tied at 3 each; slot 2 has 0. Tiebreak should trigger.
+        assert(match.matchOver == false);
+        assert(match.inTiebreak == true);
+        assert(match.tiebreakEligible[0] == true);
+        assert(match.tiebreakEligible[1] == true);
+        assert(match.tiebreakEligible[2] == false); // not tied for the max, excluded from the tiebreak
+
+        // Tiebreak round: slot 1 is the cause, only slot 0 (the other tiebreak-eligible
+        // slot) gains a tiebreak-relevant point; slot 2 (not eligible) must NOT score even
+        // though it's active and not the excluded slot.
+        ScoreRoundEnd(match, active, 1);
+        AdvanceRoundOrEndMatch(match, active);
+        assert(match.matchOver == true);
+        assert(match.winnerSlot == 0);
+        assert(match.roundScore[2] == 0); // confirmed untouched by the tiebreak round
+    }
+
+    // No active players: does not crash, match simply doesn't resolve
+    {
+        MatchState match{};
+        bool active[kMaxPlayersPerSession] = { false, false, false, false };
+        for (int r = 0; r < kRoundsPerMatch; r++) {
+            ScoreRoundEnd(match, active, -1);
+            AdvanceRoundOrEndMatch(match, active);
+        }
+        assert(match.matchOver == false);
     }
 }
 
@@ -828,6 +926,9 @@ void RunAllSmokeTests() {
 
     SmokeTestHotPotato();
     std::printf("SmokeTestHotPotato passed\n");
+
+    SmokeTestMatchState();
+    std::printf("SmokeTestMatchState passed\n");
 
     std::printf("All smoke tests passed\n");
 }
@@ -921,7 +1022,7 @@ static void ResetPotatoForNewRound(HotPotato& potato, Session& session, const bo
 static void SimulateSessionTick(Session& session, std::vector<WorldItem>& items, HazardZone& hazard,
                                 float* hazardCarry, bool* attack, bool* interact, float dt,
                                 bool* activeOut, HotPotato& potato, float* chargeTimer,
-                                InputMsg* latestInputs, Rectangle courtBounds) {
+                                InputMsg* latestInputs, Rectangle courtBounds, MatchState& match) {
     // Only players occupying a genuinely Connected slot are simulated.
     // Empty and DisconnectedPending slots are frozen: no movement, pickup,
     // attack, revive, hazard damage, or timer updates.
@@ -960,6 +1061,13 @@ static void SimulateSessionTick(Session& session, std::vector<WorldItem>& items,
         soloMode = (activeCount == 1);
     }
 
+    if (match.matchOver) {
+        // Match decided: freeze the potato in whatever state it's in (typically unheld,
+        // since the winning round-end already reset it) — no further charge/throw/catch/
+        // explosion simulation runs. A new match starts only via an explicit reset (Task 4
+        // adds a debug/UI trigger for this in a later step; for this task, matches simply
+        // end and stay ended).
+    } else {
     // Charge tracking: accumulate while held, cap at kMaxChargeDuration, reset on release.
     for (int i = 0; i < kMaxPlayersPerSession; i++) {
         if (!active[i]) continue;
@@ -1045,8 +1153,11 @@ static void SimulateSessionTick(Session& session, std::vector<WorldItem>& items,
                     if (potato.position.y < courtBounds.y) { potato.position.y = courtBounds.y; potato.velocity.y = -potato.velocity.y; }
                     if (potato.position.y > courtBounds.y + courtBounds.height) { potato.position.y = courtBounds.y + courtBounds.height; potato.velocity.y = -potato.velocity.y; }
                 } else if (potato.lastThrowerSlot != -1 && active[potato.lastThrowerSlot]) {
-                    // Multiplayer: leaving the court downs the last thrower and starts a new round.
+                    // Multiplayer: leaving the court downs the last thrower, scores the
+                    // round, and starts a new round (or ends the match).
                     session.slots[potato.lastThrowerSlot].player.ForceDown();
+                    ScoreRoundEnd(match, active, potato.lastThrowerSlot);
+                    AdvanceRoundOrEndMatch(match, active);
                     // Respawn held by the first Alive active player (deterministic slot
                     // order), via the shared ResetPotatoForNewRound helper.
                     ResetPotatoForNewRound(potato, session, active, chargeTimer);
@@ -1068,9 +1179,13 @@ static void SimulateSessionTick(Session& session, std::vector<WorldItem>& items,
     if (potato.held && potato.holderSlot >= 0 && active[potato.holderSlot]) {
         potato.explodeTimer -= dt;
         if (potato.explodeTimer <= 0.0f) {
-            session.slots[potato.holderSlot].player.ForceDown();
+            int exploderSlot = potato.holderSlot;
+            session.slots[exploderSlot].player.ForceDown();
+            ScoreRoundEnd(match, active, exploderSlot);
+            AdvanceRoundOrEndMatch(match, active);
             ResetPotatoForNewRound(potato, session, active, chargeTimer);
         }
+    }
     }
 
     // Held potato tracks its holder's position each tick.
@@ -1133,6 +1248,7 @@ int main(int argc, char** argv) {
     std::map<std::string, bool[kMaxPlayersPerSession]> pendingInteract;
     std::map<std::string, HotPotato> sessionPotato;
     std::map<std::string, float[kMaxPlayersPerSession]> sessionChargeTimer;
+    std::map<std::string, MatchState> sessionMatch;
     std::map<std::string, InputMsg[kMaxPlayersPerSession]> sessionLatestInput;
 
     const double tickInterval = 1.0 / 60.0;
@@ -1198,6 +1314,7 @@ int main(int argc, char** argv) {
                                 freshPotato.position = session->slots[0].player.position;
                                 freshPotato.explodeTimer = ComputeExplodeTimerForCatch(0);
                                 sessionPotato[outcome.roomCode] = freshPotato;
+                                sessionMatch[outcome.roomCode] = MatchState{};
                             }
 
                             WelcomeMsg welcome{
@@ -1290,7 +1407,8 @@ int main(int argc, char** argv) {
                 float* chargeTimer = sessionChargeTimer[sessionEntry];
                 InputMsg* latestInputs = sessionLatestInput.count(sessionEntry) ? sessionLatestInput[sessionEntry] : nullptr;
                 if (!latestInputs) continue; // session exists but no input map yet (shouldn't happen once creation-time init runs, but guards a null deref)
-                SimulateSessionTick(*session, items, hazard, hazardCarry, attack, interact, dt, active, potato, chargeTimer, latestInputs, courtBounds);
+                MatchState& match = sessionMatch[sessionEntry];
+                SimulateSessionTick(*session, items, hazard, hazardCarry, attack, interact, dt, active, potato, chargeTimer, latestInputs, courtBounds, match);
 
                 // state value 3 = "absent" (slot not Connected): not a real PlayerState,
                 // repurposed on the wire so an inactive slot renders as not-present
@@ -1311,6 +1429,14 @@ int main(int argc, char** argv) {
                 snap.hazardW = hazard.bounds.width;
                 snap.hazardH = hazard.bounds.height;
                 snap.potato = PotatoSnapshot{ potato.position.x, potato.position.y, potato.held, potato.inFlight, potato.holderSlot, potato.explodeTimer };
+
+                MatchSnapshot matchSnap{};
+                matchSnap.roundNumber = match.roundNumber;
+                for (int i = 0; i < kMaxPlayersPerSession; i++) matchSnap.roundScore[i] = match.roundScore[i];
+                matchSnap.matchOver = match.matchOver;
+                matchSnap.winnerSlot = match.winnerSlot;
+                matchSnap.inTiebreak = match.inTiebreak;
+                snap.match = matchSnap;
 
                 std::vector<uint8_t> snapBytes;
                 SerializeStruct(snap, snapBytes);
