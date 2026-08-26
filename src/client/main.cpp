@@ -109,6 +109,14 @@ int main(int argc, char** argv)
         drawPlayer(0, snap.players[0], BLUE, "P1");
         drawPlayer(1, snap.players[1], MAROON, "P2");
 
+        for (int i = 0; i < effects.GetParticleCount(); i++) {
+            const Particle& particle = effects.GetParticles()[i];
+            if (!particle.active) continue;
+            float alpha = 1.0f - (particle.age / particle.lifetime);
+            if (alpha < 0.0f) alpha = 0.0f;
+            DrawCircleV(particle.pos, 3.0f, Fade(particle.color, alpha));
+        }
+
         EndMode2D();
 
         DrawText(TextFormat("You are slot %d. WASD move, E pickup/revive, Q attack.", (int)mySlot), 10, 10, 16, BLACK);
