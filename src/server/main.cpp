@@ -566,38 +566,56 @@ int main(int argc, char** argv) {
                 bool* attack = pendingAttack.count(sessionEntry) ? pendingAttack[sessionEntry] : nullptr;
                 bool* interact = pendingInteract.count(sessionEntry) ? pendingInteract[sessionEntry] : nullptr;
 
-                bool p0CanRevive = p1.state == PlayerState::Downed && DistanceBetween(p0.position, p1.position) <= kReviveRange;
-                bool p1CanRevive = p0.state == PlayerState::Downed && DistanceBetween(p1.position, p0.position) <= kReviveRange;
+                // Only players occupying a genuinely Connected slot are simulated.
+                // Empty and DisconnectedPending slots are frozen: no movement, pickup,
+                // attack, revive, hazard damage, or timer updates.
+                bool p0Active = session->slots[0].state == SlotState::Connected;
+                bool p1Active = session->slots[1].state == SlotState::Connected;
+
+                // An inactive opponent cannot be revive-targeted (they're not really
+                // "there" from a live-multiplayer standpoint), so an active player
+                // checking for a valid revive target must also require the opponent
+                // to be active.
+                bool p0CanRevive = p1Active && p1.state == PlayerState::Downed && DistanceBetween(p0.position, p1.position) <= kReviveRange;
+                bool p1CanRevive = p0Active && p0.state == PlayerState::Downed && DistanceBetween(p1.position, p0.position) <= kReviveRange;
 
                 if (interact) {
-                    if (p0.state == PlayerState::Alive && interact[0] && !p0CanRevive) {
+                    if (p0Active && p0.state == PlayerState::Alive && interact[0] && !p0CanRevive) {
                         for (auto& item : items) { if (TryPickup(item, p0.position, p0.inventory, kPickupRadius)) break; }
                     }
-                    if (p1.state == PlayerState::Alive && interact[1] && !p1CanRevive) {
+                    if (p1Active && p1.state == PlayerState::Alive && interact[1] && !p1CanRevive) {
                         for (auto& item : items) { if (TryPickup(item, p1.position, p1.inventory, kPickupRadius)) break; }
                     }
                 }
                 if (attack) {
-                    if (attack[0]) { TryAttack(p0, p1); attack[0] = false; }
-                    if (attack[1]) { TryAttack(p1, p0); attack[1] = false; }
+                    if (p0Active && attack[0]) { if (p1Active) TryAttack(p0, p1); attack[0] = false; }
+                    if (p1Active && attack[1]) { if (p0Active) TryAttack(p1, p0); attack[1] = false; }
                 }
-                UpdateAttackCooldown(p0, dt);
-                UpdateAttackCooldown(p1, dt);
+                if (p0Active) UpdateAttackCooldown(p0, dt);
+                if (p1Active) UpdateAttackCooldown(p1, dt);
 
                 bool p0InteractHeld = interact ? interact[0] : false;
                 bool p1InteractHeld = interact ? interact[1] : false;
-                UpdateRevive(p0, p1, p0InteractHeld, dt, kReviveRange);
-                UpdateRevive(p1, p0, p1InteractHeld, dt, kReviveRange);
+                if (p0Active && p1Active) {
+                    UpdateRevive(p0, p1, p0InteractHeld, dt, kReviveRange);
+                    UpdateRevive(p1, p0, p1InteractHeld, dt, kReviveRange);
+                }
 
-                ApplyHazardDamage(hazard, p0, dt, hazardCarry[0]);
-                ApplyHazardDamage(hazard, p1, dt, hazardCarry[1]);
+                if (p0Active) ApplyHazardDamage(hazard, p0, dt, hazardCarry[0]);
+                if (p1Active) ApplyHazardDamage(hazard, p1, dt, hazardCarry[1]);
 
-                p0.UpdateTimers(dt);
-                p1.UpdateTimers(dt);
+                if (p0Active) p0.UpdateTimers(dt);
+                if (p1Active) p1.UpdateTimers(dt);
+
+                // state value 3 = "absent" (slot not Connected): not a real PlayerState,
+                // repurposed on the wire so an inactive slot renders as not-present
+                // instead of a fully-visible phantom player, without changing the
+                // PlayerSnapshot layout.
+                static constexpr uint8_t kSnapshotStateAbsent = 3;
 
                 SnapshotMsg snap{};
-                snap.players[0] = PlayerSnapshot{ p0.position.x, p0.position.y, p0.hp, (uint8_t)p0.state, p0.inventory.Count(ItemType::RevivePotion), p0.channelTimer };
-                snap.players[1] = PlayerSnapshot{ p1.position.x, p1.position.y, p1.hp, (uint8_t)p1.state, p1.inventory.Count(ItemType::RevivePotion), p1.channelTimer };
+                snap.players[0] = PlayerSnapshot{ p0.position.x, p0.position.y, p0.hp, p0Active ? (uint8_t)p0.state : kSnapshotStateAbsent, p0.inventory.Count(ItemType::RevivePotion), p0.channelTimer };
+                snap.players[1] = PlayerSnapshot{ p1.position.x, p1.position.y, p1.hp, p1Active ? (uint8_t)p1.state : kSnapshotStateAbsent, p1.inventory.Count(ItemType::RevivePotion), p1.channelTimer };
                 for (int i = 0; i < 2 && i < (int)items.size(); i++) {
                     snap.items[i] = WorldItemSnapshot{ items[i].position.x, items[i].position.y, items[i].active };
                 }

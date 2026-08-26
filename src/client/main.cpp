@@ -57,6 +57,8 @@ int main(int argc, char** argv)
         }
 
         auto drawPlayer = [&](const PlayerSnapshot& p, Color color, const char* label) {
+            if (p.state == 3) return; // absent: slot not occupied by a connected player
+
             Color drawColor = color;
             if (p.state == 1) drawColor = GRAY;   // Downed
             if (p.state == 2) drawColor = Fade(GRAY, 0.3f); // Dead

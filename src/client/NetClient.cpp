@@ -5,6 +5,21 @@ static double NowSeconds() {
     return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
+void NetClient::SendAck(uint32_t ackedSeq) {
+    AckMsg ack{ ackedSeq };
+    std::vector<uint8_t> ackBytes;
+    SerializeStruct(ack, ackBytes);
+    std::vector<uint8_t> full;
+    full.push_back((uint8_t)MessageType::Ack);
+    full.insert(full.end(), ackBytes.begin(), ackBytes.end());
+
+    PacketHeader header{ 1, 0, (uint16_t)full.size() };
+    std::vector<uint8_t> packet;
+    SerializeStruct(header, packet);
+    packet.insert(packet.end(), full.begin(), full.end());
+    socket.SendTo(serverIp, serverPort, packet.data(), packet.size());
+}
+
 bool NetClient::Connect(const std::string& ip, uint16_t port, const std::string& session) {
     serverIp = ip;
     serverPort = port;
@@ -54,6 +69,7 @@ bool NetClient::AttemptConnect(uint32_t reconnectToken) {
                             sessionToken = welcome.sessionToken;
                             gameConstants = welcome;
                             connected = true;
+                            SendAck(respHeader.seq);
                             return true;
                         }
                     } else if (type == MessageType::Rejected) {
@@ -137,6 +153,13 @@ void NetClient::PollNetwork(double nowSeconds) {
             if (DeserializeStruct(body, bodyLen, ack)) {
                 reliableSender.OnAckReceived(ack.ackedSeq);
             }
+        } else if (header.channel == 1) {
+            // Any other reliable message (e.g. Welcome retransmits, future server->client
+            // reliable messages): run it through the receiver for in-order delivery
+            // bookkeeping, and ack it unconditionally, even if it's a duplicate.
+            std::vector<std::pair<uint32_t, std::vector<uint8_t>>> ready;
+            reliableReceiver.TryDeliverInOrder(header.seq, std::vector<uint8_t>(payload, payload + payloadLen), ready);
+            SendAck(header.seq);
         }
     }
 

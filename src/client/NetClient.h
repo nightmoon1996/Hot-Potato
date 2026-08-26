@@ -40,4 +40,5 @@ private:
     ReliableReceiver reliableReceiver;
 
     bool AttemptConnect(uint32_t reconnectToken);
+    void SendAck(uint32_t ackedSeq);
 };
