@@ -58,8 +58,9 @@ public:
             newSession.slots[0].clientIp = clientIp;
             newSession.slots[0].clientPort = clientPort;
             newSession.slots[0].lastPacketAtSeconds = nowSeconds;
-            newSession.slots[0].player = Player(kSlot0Spawn);
-            newSession.slots[1].player = Player(kSlot1Spawn);
+            for (int i = 0; i < 4; i++) {
+                newSession.slots[i].player = Player(kSpawnPoints[i]);
+            }
             sessions[code] = newSession;
             return { ConnectResult::Created, 0, token, RejectReason::SessionFull, code };
         }
@@ -81,7 +82,7 @@ public:
             session.slots[emptySlot].clientIp = clientIp;
             session.slots[emptySlot].clientPort = clientPort;
             session.slots[emptySlot].lastPacketAtSeconds = nowSeconds;
-            session.slots[emptySlot].player = Player(emptySlot == 0 ? kSlot0Spawn : kSlot1Spawn);
+            session.slots[emptySlot].player = Player(kSpawnPoints[emptySlot]);
             return { ConnectResult::Joined, emptySlot, token, RejectReason::SessionFull, sessionName };
         }
 
