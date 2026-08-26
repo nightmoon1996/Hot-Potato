@@ -21,6 +21,7 @@ public:
     uint8_t GetPlayerSlot() const { return playerSlot; }
     const WelcomeMsg& GetGameConstants() const { return gameConstants; }
     bool IsConnected() const { return connected; }
+    bool HasReceivedSnapshot() const { return receivedSnapshot; }
 
 private:
     UdpSocket socket;
@@ -33,6 +34,7 @@ private:
 
     WelcomeMsg gameConstants{};
     SnapshotMsg latestSnapshot{};
+    bool receivedSnapshot = false;
     uint32_t lastAcceptedSnapshotSeq = 0;
     uint32_t nextUnreliableSeq = 1;
 

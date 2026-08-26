@@ -172,5 +172,45 @@ inline void RunJuiceSmokeTests() {
         printf("PASS: particle pool never exceeds capacity across repeated spawns\n");
     }
 
+    // Test 7: present -> absent -> present (reconnect) does not treat stale hp as a diff source
+    {
+        ClientEffectsState state;
+        SnapshotMsg snap{};
+        snap.players[0] = PlayerSnapshot{ 0, 0, 100, kSnapshotStateAlive, 0, 0.0f };
+        snap.players[1].state = kSnapshotStateAbsent;
+        state.Update(snap, 1, 0.016f); // player 0 present, alive, hp=100
+
+        snap.players[0].state = kSnapshotStateAbsent;
+        state.Update(snap, 1, 0.016f); // player 0 goes absent
+
+        snap.players[0] = PlayerSnapshot{ 0, 0, 40, kSnapshotStateAlive, 0, 0.0f };
+        state.Update(snap, 1, 0.016f); // player 0 reappears at hp=40
+
+        int activeDamageNumbers = 0;
+        for (int i = 0; i < state.GetDamageNumberCount(); i++) {
+            if (state.GetDamageNumbers()[i].active) activeDamageNumbers++;
+        }
+        if (activeDamageNumbers != 0) {
+            printf("FAIL: reconnect cycle should not spawn a damage number, got %d active\n", activeDamageNumbers);
+            exit(1);
+        }
+
+        int activeParticles = 0;
+        for (int i = 0; i < state.GetParticleCount(); i++) {
+            if (state.GetParticles()[i].active) activeParticles++;
+        }
+        if (activeParticles != 0) {
+            printf("FAIL: reconnect cycle should not spawn particles, got %d active\n", activeParticles);
+            exit(1);
+        }
+
+        float displayed = state.GetDisplayedHp(0);
+        if (displayed != 40.0f) {
+            printf("FAIL: expected displayedHp to snap to 40 on reappearance, got %f\n", displayed);
+            exit(1);
+        }
+        printf("PASS: present->absent->present cycle snaps displayedHp with no spurious diff effects\n");
+    }
+
     printf("All Juice smoke tests passed.\n");
 }

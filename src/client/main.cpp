@@ -55,7 +55,9 @@ int main(int argc, char** argv)
         netClient.PollNetwork(now);
 
         const SnapshotMsg& snap = netClient.GetLatestSnapshot();
-        effects.Update(snap, mySlot, dt);
+        if (netClient.HasReceivedSnapshot()) {
+            effects.Update(snap, mySlot, dt);
+        }
 
         BeginDrawing();
         ClearBackground(RAYWHITE);
@@ -105,14 +107,14 @@ int main(int argc, char** argv)
                 float ratio = p.channelTimer / constants.channelDuration;
                 int filledDots = (int)(kReviveRingDotCount * ratio);
                 if (filledDots > kReviveRingDotCount) filledDots = kReviveRingDotCount;
-                float ringRadius = 24.0f;
+                float ringRadius = kReviveRingRadius;
                 for (int dot = 0; dot < kReviveRingDotCount; dot++) {
                     float angle = (-90.0f + 360.0f * (float)dot / (float)kReviveRingDotCount) * (3.14159265f / 180.0f);
                     Vector2 dotPos{ pos.x + cosf(angle) * ringRadius, pos.y + sinf(angle) * ringRadius };
                     if (dot < filledDots) {
-                        DrawCircleV(dotPos, 3.0f, Fade(SKYBLUE, 0.9f));
+                        DrawCircleV(dotPos, kReviveRingDotRadius, Fade(SKYBLUE, 0.9f));
                     } else {
-                        DrawCircleLines((int)dotPos.x, (int)dotPos.y, 3.0f, Fade(SKYBLUE, 0.4f));
+                        DrawCircleLines((int)dotPos.x, (int)dotPos.y, (int)kReviveRingDotRadius, Fade(SKYBLUE, 0.4f));
                     }
                 }
             }

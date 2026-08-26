@@ -14,6 +14,8 @@ void ClientEffectsState::Update(const SnapshotMsg& snap, uint8_t mySlot, float d
         bool presentNow = (p.state != kSnapshotStateAbsent);
         bool presentBefore = hasPrevFrame && (prevState[i] != kSnapshotStateAbsent);
 
+        // An absent slot's snapshot fields (hp, state, pos) are stale/meaningless, so any
+        // transition involving absence must be skipped rather than diffed as a real change.
         if (presentNow && presentBefore) {
             if (p.hp < prevHp[i]) {
                 int damage = prevHp[i] - p.hp;
@@ -80,11 +82,13 @@ float ClientEffectsState::GetHitFlashRatio(int slot) const {
 }
 
 float ClientEffectsState::GetShakeOffsetX() const {
+    // Squaring trauma is the standard shake curve: small hits barely shake, repeated/big hits shake hard.
     float magnitude = shakeTrauma * shakeTrauma * kShakeMaxOffsetPixels;
     return ((float)rand() / (float)RAND_MAX * 2.0f - 1.0f) * magnitude;
 }
 
 float ClientEffectsState::GetShakeOffsetY() const {
+    // Squaring trauma is the standard shake curve: small hits barely shake, repeated/big hits shake hard.
     float magnitude = shakeTrauma * shakeTrauma * kShakeMaxOffsetPixels;
     return ((float)rand() / (float)RAND_MAX * 2.0f - 1.0f) * magnitude;
 }

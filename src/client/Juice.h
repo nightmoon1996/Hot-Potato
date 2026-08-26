@@ -14,6 +14,8 @@ constexpr float kShakeMaxOffsetPixels = 12.0f;
 constexpr float kParticleLifetime = 0.5f;
 constexpr int kParticlesPerBurst = 10;
 constexpr int kReviveRingDotCount = 12;
+constexpr float kReviveRingRadius = 24.0f;
+constexpr float kReviveRingDotRadius = 3.0f;
 constexpr int kMaxParticles = 128;
 constexpr int kMaxDamageNumbers = 32;
 

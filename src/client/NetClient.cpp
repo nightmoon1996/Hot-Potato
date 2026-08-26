@@ -146,6 +146,7 @@ void NetClient::PollNetwork(double nowSeconds) {
                 if (DeserializeStruct(body, bodyLen, snap)) {
                     latestSnapshot = snap;
                     lastAcceptedSnapshotSeq = header.seq;
+                    receivedSnapshot = true;
                 }
             }
         } else if (header.channel == 1 && type == MessageType::Ack) {
