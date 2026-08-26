@@ -2,6 +2,7 @@
 
 #include <string>
 #include <map>
+#include <vector>
 #include <cstdint>
 #include <cstdlib>
 #include "Session.h"
@@ -88,6 +89,14 @@ public:
         for (auto& entry : sessions) {
             entry.second.CheckTimeouts(nowSeconds);
         }
+    }
+
+    std::vector<std::string> GetSessionNames() const {
+        std::vector<std::string> names;
+        for (const auto& entry : sessions) {
+            names.push_back(entry.first);
+        }
+        return names;
     }
 
 private:

@@ -16,6 +16,27 @@
 #include "Combat.h"
 #include "DebugActions.h"
 
+struct ClientLocation {
+    bool found;
+    std::string sessionName;
+    int slotIndex;
+};
+
+static ClientLocation FindClientByAddress(SessionManager& manager, const std::vector<std::string>& sessionNames,
+                                           const std::string& ip, uint16_t port) {
+    for (const auto& name : sessionNames) {
+        Session* session = manager.GetSession(name);
+        if (!session) continue;
+        for (int i = 0; i < 2; i++) {
+            if (session->slots[i].clientIp == ip && session->slots[i].clientPort == port &&
+                session->slots[i].state == SlotState::Connected) {
+                return { true, name, i };
+            }
+        }
+    }
+    return { false, "", -1 };
+}
+
 static const uint16_t kServerPort = 7777;
 static const float kMoveSpeed = 200.0f;
 static const float kPickupRadius = 24.0f;
@@ -70,6 +91,8 @@ int main() {
     std::map<std::string, std::vector<WorldItem>> sessionWorldItems;
     std::map<std::string, float[2]> sessionHazardCarry;
     std::map<std::string, uint32_t> sessionSnapshotSeq;
+    std::map<std::string, bool[2]> pendingAttack;
+    std::map<std::string, bool[2]> pendingInteract;
 
     const double tickInterval = 1.0 / 60.0;
     double lastTick = NowSeconds();
@@ -77,6 +100,8 @@ int main() {
     uint8_t recvBuffer[1024];
 
     while (true) {
+        double now = NowSeconds();
+
         // --- Receive and dispatch incoming packets ---
         std::string fromIp;
         uint16_t fromPort;
@@ -96,7 +121,6 @@ int main() {
                     ConnectRequestMsg msg{};
                     if (DeserializeStruct(body, bodyLen, msg)) {
                         std::string sessionName(msg.sessionName);
-                        double now = NowSeconds();
                         ConnectOutcome outcome = sessionManager.HandleConnect(sessionName, msg.reconnectToken, fromIp, fromPort, now);
 
                         if (outcome.result == ConnectResult::Rejected) {
@@ -137,24 +161,137 @@ int main() {
                         }
                     }
                 } else {
-                    // For all other message types, find which session/slot this address belongs to.
-                    // (A small linear scan is fine at this project's scale: at most a handful of
-                    // sessions, 2 slots each.)
-                    // This requires iterating sessionManager's sessions, so we expose a helper loop here
-                    // rather than adding a by-address index to SessionManager (out of scope for this task).
+                    std::vector<std::string> sessionNames = sessionManager.GetSessionNames();
+                    ClientLocation loc = FindClientByAddress(sessionManager, sessionNames, fromIp, fromPort);
+                    if (loc.found) {
+                        Session* session = sessionManager.GetSession(loc.sessionName);
+                        PlayerSlot& slot = session->slots[loc.slotIndex];
+                        slot.lastPacketAtSeconds = now;
+
+                        if (header.channel == 0 && type == MessageType::Input) {
+                            InputMsg input{};
+                            if (DeserializeStruct(body, bodyLen, input)) {
+                                slot.player.position.x += input.moveX * kMoveSpeed * (float)tickInterval;
+                                slot.player.position.y += input.moveY * kMoveSpeed * (float)tickInterval;
+                                pendingAttack[loc.sessionName][loc.slotIndex] = input.attackPressed;
+                                pendingInteract[loc.sessionName][loc.slotIndex] = input.interactHeld;
+                            }
+                        } else if (header.channel == 1 && type == MessageType::Ack) {
+                            AckMsg ack{};
+                            if (DeserializeStruct(body, bodyLen, ack)) {
+                                slot.reliableSender.OnAckReceived(ack.ackedSeq);
+                            }
+                        } else if (header.channel == 1 && type == MessageType::DebugActionRequest) {
+                            DebugActionRequestMsg req{};
+                            if (DeserializeStruct(body, bodyLen, req)) {
+                                std::vector<std::pair<uint32_t, std::vector<uint8_t>>> ready;
+                                slot.reliableReceiver.TryDeliverInOrder(header.seq, std::vector<uint8_t>(body, body + bodyLen), ready);
+                                for (auto& msg : ready) {
+                                    DebugActionRequestMsg deliveredReq{};
+                                    if (DeserializeStruct(msg.second.data(), msg.second.size(), deliveredReq)) {
+                                        if (deliveredReq.targetSlot < 2) {
+                                            ApplyDebugAction(session->slots[deliveredReq.targetSlot].player, deliveredReq.action);
+                                        }
+                                    }
+                                }
+                                AckMsg ackReply{ header.seq };
+                                std::vector<uint8_t> ackBytes;
+                                SerializeStruct(ackReply, ackBytes);
+                                std::vector<uint8_t> ackFull;
+                                ackFull.push_back((uint8_t)MessageType::Ack);
+                                ackFull.insert(ackFull.end(), ackBytes.begin(), ackBytes.end());
+                                PacketHeader ackHeader{ 1, 0, (uint16_t)ackFull.size() };
+                                std::vector<uint8_t> ackPacket;
+                                SerializeStruct(ackHeader, ackPacket);
+                                ackPacket.insert(ackPacket.end(), ackFull.begin(), ackFull.end());
+                                socket.SendTo(slot.clientIp, slot.clientPort, ackPacket.data(), ackPacket.size());
+                            }
+                        }
+                    }
                 }
             }
         }
 
         // --- Fixed 60Hz simulation tick ---
-        double now = NowSeconds();
+        now = NowSeconds();
         if (now - lastTick >= tickInterval) {
             float dt = (float)(now - lastTick);
             lastTick = now;
             sessionManager.CheckAllTimeouts(now);
-            // Per-session simulation and snapshot broadcast happens here in Task 7's
-            // continuation of this file (input processing, movement, combat, revive,
-            // hazard, timers, snapshot send) — see Task 7.
+
+            for (auto& sessionEntry : sessionManager.GetSessionNames()) {
+                Session* session = sessionManager.GetSession(sessionEntry);
+                if (!session) continue;
+
+                Player& p0 = session->slots[0].player;
+                Player& p1 = session->slots[1].player;
+                std::vector<WorldItem>& items = sessionWorldItems[sessionEntry];
+                float* hazardCarry = sessionHazardCarry[sessionEntry];
+                bool* attack = pendingAttack.count(sessionEntry) ? pendingAttack[sessionEntry] : nullptr;
+                bool* interact = pendingInteract.count(sessionEntry) ? pendingInteract[sessionEntry] : nullptr;
+
+                bool p0CanRevive = p1.state == PlayerState::Downed && DistanceBetween(p0.position, p1.position) <= kReviveRange;
+                bool p1CanRevive = p0.state == PlayerState::Downed && DistanceBetween(p1.position, p0.position) <= kReviveRange;
+
+                if (interact) {
+                    if (p0.state == PlayerState::Alive && interact[0] && !p0CanRevive) {
+                        for (auto& item : items) { if (TryPickup(item, p0.position, p0.inventory, kPickupRadius)) break; }
+                    }
+                    if (p1.state == PlayerState::Alive && interact[1] && !p1CanRevive) {
+                        for (auto& item : items) { if (TryPickup(item, p1.position, p1.inventory, kPickupRadius)) break; }
+                    }
+                }
+                if (attack) {
+                    if (attack[0]) { TryAttack(p0, p1); attack[0] = false; }
+                    if (attack[1]) { TryAttack(p1, p0); attack[1] = false; }
+                }
+                UpdateAttackCooldown(p0, dt);
+                UpdateAttackCooldown(p1, dt);
+
+                bool p0InteractHeld = interact ? interact[0] : false;
+                bool p1InteractHeld = interact ? interact[1] : false;
+                UpdateRevive(p0, p1, p0InteractHeld, dt, kReviveRange);
+                UpdateRevive(p1, p0, p1InteractHeld, dt, kReviveRange);
+
+                ApplyHazardDamage(hazard, p0, dt, hazardCarry[0]);
+                ApplyHazardDamage(hazard, p1, dt, hazardCarry[1]);
+
+                p0.UpdateTimers(dt);
+                p1.UpdateTimers(dt);
+
+                SnapshotMsg snap{};
+                snap.players[0] = PlayerSnapshot{ p0.position.x, p0.position.y, p0.hp, (uint8_t)p0.state, p0.inventory.Count(ItemType::RevivePotion), p0.channelTimer };
+                snap.players[1] = PlayerSnapshot{ p1.position.x, p1.position.y, p1.hp, (uint8_t)p1.state, p1.inventory.Count(ItemType::RevivePotion), p1.channelTimer };
+                for (int i = 0; i < 2 && i < (int)items.size(); i++) {
+                    snap.items[i] = WorldItemSnapshot{ items[i].position.x, items[i].position.y, items[i].active };
+                }
+                snap.hazardX = hazard.bounds.x;
+                snap.hazardY = hazard.bounds.y;
+                snap.hazardW = hazard.bounds.width;
+                snap.hazardH = hazard.bounds.height;
+
+                std::vector<uint8_t> snapBytes;
+                SerializeStruct(snap, snapBytes);
+                uint32_t seq = sessionSnapshotSeq[sessionEntry]++;
+                for (int i = 0; i < 2; i++) {
+                    if (session->slots[i].state == SlotState::Connected) {
+                        SendUnreliable(socket, session->slots[i].clientIp, session->slots[i].clientPort, seq, MessageType::Snapshot, snapBytes.data(), snapBytes.size());
+                    }
+                }
+
+                // Retransmit any unacked reliable messages for this session's slots
+                for (int i = 0; i < 2; i++) {
+                    if (session->slots[i].state != SlotState::Connected) continue;
+                    auto toResend = session->slots[i].reliableSender.GetMessagesToRetransmit(now, 0.1);
+                    for (auto& msg : toResend) {
+                        PacketHeader resendHeader{ 1, msg.first, (uint16_t)msg.second.size() };
+                        std::vector<uint8_t> packet;
+                        SerializeStruct(resendHeader, packet);
+                        packet.insert(packet.end(), msg.second.begin(), msg.second.end());
+                        socket.SendTo(session->slots[i].clientIp, session->slots[i].clientPort, packet.data(), packet.size());
+                    }
+                }
+            }
         }
 
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
