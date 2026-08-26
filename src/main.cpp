@@ -8,6 +8,7 @@
 #include "shared/Protocol.h"
 #include "shared/Serialize.h"
 #include "shared/ReliableChannel.h"
+#include "server/SessionManager.h"
 
 void SmokeTestItems() {
     Inventory inv;
@@ -258,6 +259,61 @@ void SmokeTestSerialization() {
     assert(snapRoundTripped.hazardW == 50.0f);
 }
 
+void SmokeTestSessionManager() {
+    SessionManager manager;
+
+    // Case 1: fresh session created, first connector gets slot 0
+    ConnectOutcome outcome1 = manager.HandleConnect("game1", 0, "127.0.0.1", 5000, 0.0);
+    assert(outcome1.result == ConnectResult::Created);
+    assert(outcome1.slotIndex == 0);
+    assert(outcome1.sessionToken != 0);
+
+    // Case 2: second connector joins the open slot
+    ConnectOutcome outcome2 = manager.HandleConnect("game1", 0, "127.0.0.1", 5001, 0.0);
+    assert(outcome2.result == ConnectResult::Joined);
+    assert(outcome2.slotIndex == 1);
+    assert(outcome2.sessionToken != 0);
+    assert(outcome2.sessionToken != outcome1.sessionToken);
+
+    // Case 3: third connector rejected, session full
+    ConnectOutcome outcome3 = manager.HandleConnect("game1", 0, "127.0.0.1", 5002, 0.0);
+    assert(outcome3.result == ConnectResult::Rejected);
+    assert(outcome3.rejectReason == RejectReason::SessionFull);
+
+    // Simulate slot 0 going disconnected (timeout), then reconnecting
+    Session* session = manager.GetSession("game1");
+    assert(session != nullptr);
+    session->slots[0].lastPacketAtSeconds = 0.0;
+    session->slots[1].lastPacketAtSeconds = 59.0; // recent packet: must not time out alongside slot 0
+    session->CheckTimeouts(60.0); // 60s elapsed -> slot 0 becomes DisconnectedPending
+    assert(session->slots[0].state == SlotState::DisconnectedPending);
+    assert(session->slots[1].state == SlotState::Connected); // slot 1 untouched (recent packet)
+
+    // Case 4: reconnect with the correct token succeeds, resumes the same slot
+    ConnectOutcome outcome4 = manager.HandleConnect("game1", outcome1.sessionToken, "127.0.0.1", 5003, 61.0);
+    assert(outcome4.result == ConnectResult::Reconnected);
+    assert(outcome4.slotIndex == 0);
+    assert(outcome4.sessionToken == outcome1.sessionToken);
+    assert(session->slots[0].state == SlotState::Connected);
+
+    // Case 5: reconnect with a token that doesn't match anything falls back to fresh-connect logic
+    // (session "game1" is now full again after the reconnect above, so this should be rejected)
+    ConnectOutcome outcome5 = manager.HandleConnect("game1", 999999, "127.0.0.1", 5004, 61.0);
+    assert(outcome5.result == ConnectResult::Rejected);
+
+    // Full timeout-to-Empty cycle: disconnect slot 0 again, let both timeouts elapse, slot becomes Empty
+    session->slots[0].lastPacketAtSeconds = 100.0;
+    session->CheckTimeouts(160.0); // 60s -> DisconnectedPending
+    assert(session->slots[0].state == SlotState::DisconnectedPending);
+    session->CheckTimeouts(220.0); // another 60s (120s total from lastPacketAtSeconds) -> Empty
+    assert(session->slots[0].state == SlotState::Empty);
+
+    // A new session name creates an independent session
+    ConnectOutcome outcomeOther = manager.HandleConnect("game2", 0, "127.0.0.1", 6000, 0.0);
+    assert(outcomeOther.result == ConnectResult::Created);
+    assert(outcomeOther.slotIndex == 0);
+}
+
 int main()
 {
     SmokeTestSerialization();
@@ -277,6 +333,9 @@ int main()
 
     SmokeTestCombatAndRevive();
     TraceLog(LOG_INFO, "SmokeTestCombatAndRevive passed");
+
+    SmokeTestSessionManager();
+    TraceLog(LOG_INFO, "SmokeTestSessionManager passed");
 
     TraceLog(LOG_INFO, "All smoke tests passed");
 
