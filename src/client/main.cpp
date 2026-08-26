@@ -213,6 +213,30 @@ int main(int argc, char** argv)
         DrawText(TextFormat("You are slot %d. WASD move, E pickup/revive, Mouse: hold to charge throw, release to throw.", (int)mySlot), 10, 30, 16, BLACK);
         DrawText("F1: Debug Menu", 10, 50, 16, DARKGRAY);
 
+        {
+            const MatchSnapshot& matchSnap = snap.match;
+            if (netClient.HasReceivedSnapshot()) {
+                if (matchSnap.matchOver) {
+                    const char* winnerText = (matchSnap.winnerSlot >= 0 && matchSnap.winnerSlot < kMaxPlayersPerSession)
+                        ? TextFormat("Match Over! Winner: P%d", matchSnap.winnerSlot + 1)
+                        : "Match Over! (no winner)";
+                    DrawText(winnerText, 10, 70, 20, RED);
+                } else {
+                    const char* roundText = matchSnap.inTiebreak
+                        ? "Round: Tiebreak"
+                        : TextFormat("Round: %d / %d", matchSnap.roundNumber, kRoundsPerMatch);
+                    DrawText(roundText, 10, 70, 16, BLACK);
+                }
+
+                int scoreY = 90;
+                for (int i = 0; i < kMaxPlayersPerSession; i++) {
+                    if (snap.players[i].state == 3) continue; // absent slot, skip
+                    DrawText(TextFormat("P%d: %d", i + 1, matchSnap.roundScore[i]), 10, scoreY, 14, kPlayerColors[i]);
+                    scoreY += 18;
+                }
+            }
+        }
+
         debugMenu.DrawAndHandle(netClient);
 
         EndDrawing();
