@@ -4,6 +4,7 @@
 #include "Player.h"
 #include "Hazard.h"
 #include "Combat.h"
+#include "DebugMenu.h"
 
 void SmokeTestItems() {
     Inventory inv;
@@ -182,6 +183,8 @@ int main()
 
     HazardZone hazard{ Rectangle{450.0f, 200.0f, 100.0f, 200.0f} };
 
+    DebugMenu debugMenu;
+
     std::vector<WorldItem> worldItems = {
         WorldItem{ Vector2{300.0f, 500.0f}, ItemType::RevivePotion, true },
         WorldItem{ Vector2{700.0f, 100.0f}, ItemType::RevivePotion, true },
@@ -194,6 +197,10 @@ int main()
     while (!w.ShouldClose())
     {
         float dt = GetFrameTime();
+
+        if (IsKeyPressed(KEY_F1)) {
+            debugMenu.Toggle();
+        }
 
         // --- Input: movement (only when Alive) ---
         if (p1.state == PlayerState::Alive) {
@@ -290,6 +297,9 @@ int main()
 
         DrawText("P1: WASD move, E pickup/revive, Q attack", 10, 10, 16, BLACK);
         DrawText("P2: Arrows move, RCtrl pickup/revive, RShift attack", 10, 30, 16, BLACK);
+        DrawText("F1: Debug Menu", 10, 50, 16, DARKGRAY);
+
+        debugMenu.DrawAndHandle(p1, p2);
 
         EndDrawing();
     }
