@@ -1,5 +1,6 @@
 #include <raylib-cpp.hpp>
 #include <string>
+#include <cmath>
 #include "NetClient.h"
 #include "DebugMenu.h"
 #include "Juice.h"
@@ -102,7 +103,18 @@ int main(int argc, char** argv)
 
             if (p.channelTimer > 0.0f) {
                 float ratio = p.channelTimer / constants.channelDuration;
-                DrawCircleSector(pos, 24, -90, -90 + 360 * ratio, 32, Fade(SKYBLUE, 0.6f));
+                int filledDots = (int)(kReviveRingDotCount * ratio);
+                if (filledDots > kReviveRingDotCount) filledDots = kReviveRingDotCount;
+                float ringRadius = 24.0f;
+                for (int dot = 0; dot < kReviveRingDotCount; dot++) {
+                    float angle = (-90.0f + 360.0f * (float)dot / (float)kReviveRingDotCount) * (3.14159265f / 180.0f);
+                    Vector2 dotPos{ pos.x + cosf(angle) * ringRadius, pos.y + sinf(angle) * ringRadius };
+                    if (dot < filledDots) {
+                        DrawCircleV(dotPos, 3.0f, Fade(SKYBLUE, 0.9f));
+                    } else {
+                        DrawCircleLines((int)dotPos.x, (int)dotPos.y, 3.0f, Fade(SKYBLUE, 0.4f));
+                    }
+                }
             }
         };
 
