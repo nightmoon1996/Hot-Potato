@@ -136,8 +136,11 @@ int main(int argc, char** argv)
             }
         };
 
-        drawPlayer(0, snap.players[0], BLUE, "P1");
-        drawPlayer(1, snap.players[1], MAROON, "P2");
+        static const Color kPlayerColors[4] = { BLUE, MAROON, GREEN, PURPLE };
+        static const char* kPlayerLabels[4] = { "P1", "P2", "P3", "P4" };
+        for (int i = 0; i < 4; i++) {
+            drawPlayer(i, snap.players[i], kPlayerColors[i], kPlayerLabels[i]);
+        }
 
         for (int i = 0; i < effects.GetParticleCount(); i++) {
             const Particle& particle = effects.GetParticles()[i];

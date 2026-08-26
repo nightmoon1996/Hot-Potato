@@ -57,16 +57,16 @@ public:
 
 private:
     // Diff caches (previous frame's values)
-    int prevHp[2] = {0, 0};
-    uint8_t prevState[2] = {kSnapshotStateAbsent, kSnapshotStateAbsent};
-    int prevPotionCount[2] = {0, 0};
+    int prevHp[4] = {0, 0, 0, 0};
+    uint8_t prevState[4] = {kSnapshotStateAbsent, kSnapshotStateAbsent, kSnapshotStateAbsent, kSnapshotStateAbsent};
+    int prevPotionCount[4] = {0, 0, 0, 0};
     bool prevItemActive[2] = {false, false};
     Vector2 prevItemPos[2]{};
     bool hasPrevFrame = false;
 
     // Presentation state
-    float displayedHp[2] = {0.0f, 0.0f};
-    float hitFlashTimer[2] = {0.0f, 0.0f};
+    float displayedHp[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    float hitFlashTimer[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     float shakeTrauma = 0.0f;
 
     Particle particles[kMaxParticles]{};

@@ -9,7 +9,7 @@ static float Clamp01(float v) {
 }
 
 void ClientEffectsState::Update(const SnapshotMsg& snap, uint8_t mySlot, float dt) {
-    for (int i = 0; i < 2; i++) {
+    for (int i = 0; i < 4; i++) {
         const PlayerSnapshot& p = snap.players[i];
         bool presentNow = (p.state != kSnapshotStateAbsent);
         bool presentBefore = hasPrevFrame && (prevState[i] != kSnapshotStateAbsent);
