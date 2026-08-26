@@ -7,6 +7,30 @@ inline int TeamForSlot(int slot) {
     return (slot < 2) ? 0 : 1;
 }
 
+// 2v2 requires all four slots filled. With fewer, slot assignment (lowest empty slot
+// first) puts everyone on the same team, so every round-end would credit the EMPTY
+// opposing team and the match would resolve into a meaningless lopsided "win" without
+// a real contest ever happening. Gameplay is therefore held in a waiting state until
+// four players are actually connected. FFA and RevivePotionTest are unaffected.
+constexpr int kTwoVTwoRequiredPlayers = 4;
+
+inline int CountActiveSlots(const bool* active) {
+    int count = 0;
+    for (int i = 0; i < kMaxPlayersPerSession; i++) {
+        if (active[i]) count++;
+    }
+    return count;
+}
+
+// True when a session of the given mode may run its Hot-Potato gameplay/scoring this
+// tick. RevivePotionTest never runs it (no potato); TwoVTwo only runs it at full
+// population; FFA always runs it, exactly as before.
+inline bool HotPotatoGameplayEnabled(GameMode mode, const bool* active) {
+    if (mode == GameMode::RevivePotionTest) return false;
+    if (mode == GameMode::TwoVTwo) return CountActiveSlots(active) >= kTwoVTwoRequiredPlayers;
+    return true;
+}
+
 struct MatchState {
     int roundNumber = 1; // 1-indexed; 1..kRoundsPerMatch during normal play, stays at kRoundsPerMatch+something conceptually once in tiebreak (tiebreak rounds don't increment past the cap the same way — see AdvanceRoundOrEndMatch)
     int roundScore[kMaxPlayersPerSession] = {0, 0, 0, 0};

@@ -173,9 +173,24 @@ int main(int argc, char** argv)
             drawPlayer(i, snap.players[i], kPlayerColors[i], kPlayerLabels[i]);
         }
 
+        // GetGameMode() reports FFA (the zero value) until a Welcome actually arrives, so
+        // every mode-dependent branch below is gated on HasReceivedWelcome() — otherwise a
+        // delayed/dropped Welcome would briefly render the wrong mode's HUD.
+        const bool knowMode = netClient.HasReceivedWelcome();
         GameMode myMode = netClient.GetGameMode();
 
-        if (myMode != GameMode::RevivePotionTest) {
+        // 2v2 holds all gameplay and scoring until four players are connected (see the
+        // server's HotPotatoGameplayEnabled gate); derived from the snapshot's occupied
+        // slots so no protocol change is needed.
+        int connectedPlayers = 0;
+        for (int i = 0; i < kMaxPlayersPerSession; i++) {
+            if (snap.players[i].state != 3) connectedPlayers++;
+        }
+        const bool twoVTwoWaiting = knowMode && myMode == GameMode::TwoVTwo &&
+                                    netClient.HasReceivedSnapshot() &&
+                                    connectedPlayers < kMaxPlayersPerSession;
+
+        if (knowMode && myMode != GameMode::RevivePotionTest) {
             // Draw the potato itself (a simple colored circle; no arc/height rendering this phase).
             // Guarded: before the first snapshot arrives `snap` is default-constructed, and a
             // potato that is neither held nor in flight (no Alive player to hold it) has no
@@ -219,9 +234,15 @@ int main(int argc, char** argv)
         DrawText(TextFormat("You are slot %d. WASD move, E pickup/revive, Mouse: hold to charge throw, release to throw.", (int)mySlot), 10, 30, 16, BLACK);
         DrawText("F1: Debug Menu", 10, 50, 16, DARKGRAY);
 
-        if (netClient.HasReceivedSnapshot()) {
+        if (knowMode && netClient.HasReceivedSnapshot()) {
             if (myMode == GameMode::RevivePotionTest) {
                 // No match/round/score concept in this mode — nothing to show here.
+            } else if (twoVTwoWaiting) {
+                // Under-populated 2v2: the server runs no potato logic and no scoring, so
+                // showing round/score HUD here would be misleading. Say what's missing.
+                DrawText(TextFormat("Waiting for 4 players... (%d / %d)", connectedPlayers, kMaxPlayersPerSession),
+                         10, 70, 20, ORANGE);
+                DrawText("2v2 needs a full room before the match can start.", 10, 94, 14, DARKGRAY);
             } else if (myMode == GameMode::TwoVTwo) {
                 const MatchSnapshot& matchSnap = snap.match;
                 if (matchSnap.matchOver) {

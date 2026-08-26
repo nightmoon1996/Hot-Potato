@@ -78,6 +78,7 @@ bool NetClient::AttemptConnect(uint32_t reconnectToken) {
                             playerSlot = welcome.playerSlot;
                             sessionToken = welcome.sessionToken;
                             gameConstants = welcome;
+                            receivedWelcome = true;
                             connected = true;
                             SendAck(respHeader.seq);
                             return true;

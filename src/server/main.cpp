@@ -29,7 +29,8 @@ static void SimulateSessionTick(Session& session, std::vector<WorldItem>& items,
                                 bool* activeOut, HotPotato& potato, float* chargeTimer,
                                 InputMsg* latestInputs, Rectangle courtBounds, MatchState& match,
                                 GameMode mode);
-static void StartNewMatch(Session& session, MatchState& match, HotPotato& potato, float* chargeTimer);
+static void StartNewMatch(Session& session, MatchState& match, HotPotato& potato, float* chargeTimer,
+                          GameMode mode);
 
 void SmokeTestItems() {
     Inventory inv;
@@ -1045,7 +1046,7 @@ void SmokeTestMatchOverFreezeAndNewMatch() {
         assert(potato.held == true && potato.holderSlot == 0); // still frozen otherwise
 
         // --- New Match reset actually un-wedges the session ---
-        StartNewMatch(session, match, potato, chargeTimer);
+        StartNewMatch(session, match, potato, chargeTimer, GameMode::FFA);
 
         assert(match.matchOver == false);
         assert(match.roundNumber == 1);
@@ -1089,7 +1090,7 @@ void SmokeTestMatchOverFreezeAndNewMatch() {
         match.roundNumber = 4;
         match.roundScore[1] = 2;
 
-        StartNewMatch(session, match, potato, chargeTimer);
+        StartNewMatch(session, match, potato, chargeTimer, GameMode::FFA);
 
         assert(match.matchOver == false);
         assert(match.roundNumber == 1);
@@ -1361,6 +1362,122 @@ void SmokeTestGameModes() {
     }
 }
 
+// Finding 1 regression: a 2v2 room with fewer than 4 connected players must never score
+// or end a match. Slot assignment hands out the lowest empty slot, so 2 players naturally
+// land on slots 0 and 1 -- both Team A -- and every round-end would otherwise credit the
+// EMPTY Team B, producing a guaranteed bogus 0-3 "Team B Wins".
+void SmokeTestTwoVTwoPopulationGate() {
+    // Pure predicate: only 2v2 is gated, and only below 4 players.
+    {
+        bool active2[kMaxPlayersPerSession] = { true, true, false, false };
+        bool active3[kMaxPlayersPerSession] = { true, true, true, false };
+        bool active4[kMaxPlayersPerSession] = { true, true, true, true };
+        assert(HotPotatoGameplayEnabled(GameMode::TwoVTwo, active2) == false);
+        assert(HotPotatoGameplayEnabled(GameMode::TwoVTwo, active3) == false);
+        assert(HotPotatoGameplayEnabled(GameMode::TwoVTwo, active4) == true);
+        // FFA is untouched by the gate at every population.
+        assert(HotPotatoGameplayEnabled(GameMode::FFA, active2) == true);
+        assert(HotPotatoGameplayEnabled(GameMode::FFA, active4) == true);
+        // RevivePotionTest never runs potato logic, at any population.
+        assert(HotPotatoGameplayEnabled(GameMode::RevivePotionTest, active4) == false);
+        // Both 2-player slots really are on the same team (the root cause).
+        assert(TeamForSlot(0) == TeamForSlot(1));
+    }
+
+    Session session;
+    for (int i = 0; i < 2; i++) {
+        session.slots[i].state = SlotState::Connected;
+        session.slots[i].player = Player(kSpawnPoints[i]);
+    }
+    HazardZone hazard{ Rectangle{ 5000.0f, 5000.0f, 10.0f, 10.0f } };
+    std::vector<WorldItem> items;
+    Rectangle courtBounds{ 0.0f, 0.0f, 1000.0f, 600.0f };
+    float hazardCarry[kMaxPlayersPerSession] = {};
+    bool attack[kMaxPlayersPerSession] = {};
+    bool interact[kMaxPlayersPerSession] = {};
+    float chargeTimer[kMaxPlayersPerSession] = {};
+    InputMsg latestInputs[kMaxPlayersPerSession] = {};
+    MatchState match{};
+    const float dt = 1.0f / 60.0f;
+
+    // Seed a live-looking potato held by slot 0 with a short fuse: under the gate, it must
+    // be forced inert and its timer must never expire into a scored round-end.
+    HotPotato potato{};
+    potato.held = true;
+    potato.holderSlot = 0;
+    potato.position = session.slots[0].player.position;
+    potato.explodeTimer = 0.5f;
+
+    // 30 seconds of ticks -- far more than enough for 3 rounds of explosions to resolve a
+    // whole match if the gate were absent.
+    for (int tick = 0; tick < 60 * 30; tick++) {
+        bool active[kMaxPlayersPerSession];
+        SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
+                             potato, chargeTimer, latestInputs, courtBounds, match, GameMode::TwoVTwo);
+    }
+    assert(potato.held == false && potato.inFlight == false); // forced inert, nothing live on the wire
+    assert(potato.holderSlot == -1);
+    assert(match.teamScore[0] == 0 && match.teamScore[1] == 0); // never scored
+    assert(match.matchOver == false);                            // never froze on a bogus win
+    assert(match.winnerSlot == -1);
+    assert(match.roundNumber == 1);                              // never advanced a round
+    assert(match.inTiebreak == false);
+    assert(session.slots[0].player.state == PlayerState::Alive); // no explosion ever downed anyone
+
+    // Charging/releasing is inert too while under-populated.
+    latestInputs[0].chargingThrow = true;
+    latestInputs[0].releaseThrow = true;
+    {
+        bool active[kMaxPlayersPerSession];
+        SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
+                             potato, chargeTimer, latestInputs, courtBounds, match, GameMode::TwoVTwo);
+    }
+    assert(potato.inFlight == false && potato.held == false);
+    latestInputs[0] = InputMsg{};
+
+    // A 3rd player still isn't enough (2v2 needs a full room, not merely both teams staffed).
+    session.slots[2].state = SlotState::Connected;
+    session.slots[2].player = Player(kSpawnPoints[2]);
+    for (int tick = 0; tick < 60 * 10; tick++) {
+        bool active[kMaxPlayersPerSession];
+        SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
+                             potato, chargeTimer, latestInputs, courtBounds, match, GameMode::TwoVTwo);
+    }
+    assert(match.teamScore[0] == 0 && match.teamScore[1] == 0);
+    assert(match.matchOver == false);
+    assert(potato.held == false);
+
+    // 4th player joins: gameplay resumes. The very next tick seeds a fresh live potato.
+    session.slots[3].state = SlotState::Connected;
+    session.slots[3].player = Player(kSpawnPoints[3]);
+    {
+        bool active[kMaxPlayersPerSession];
+        SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
+                             potato, chargeTimer, latestInputs, courtBounds, match, GameMode::TwoVTwo);
+    }
+    assert(potato.held == true);
+    assert(potato.holderSlot == 0); // first Alive active slot
+    assert(potato.explodeTimer > 0.0f);
+
+    // ...and scoring genuinely works again: run until the fuse burns down on slot 0
+    // (Team A), which must credit Team B.
+    for (int tick = 0; tick < 60 * 20 && match.teamScore[1] == 0; tick++) {
+        bool active[kMaxPlayersPerSession];
+        SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
+                             potato, chargeTimer, latestInputs, courtBounds, match, GameMode::TwoVTwo);
+    }
+    assert(match.teamScore[1] == 1); // Team B credited for Team A's explosion
+    assert(match.roundNumber == 2);  // round genuinely advanced
+
+    // StartNewMatch respects the gate too: dropping back under 4 players must not hand
+    // out a live potato via the debug menu's "New Match" button.
+    session.slots[3].state = SlotState::Empty;
+    session.slots[2].state = SlotState::Empty;
+    StartNewMatch(session, match, potato, chargeTimer, GameMode::TwoVTwo);
+    assert(potato.held == false && potato.inFlight == false && potato.holderSlot == -1);
+    assert(match.teamScore[0] == 0 && match.teamScore[1] == 0);
+}
+
 void SmokeTestRevivalItemSpawnLocations() {
     Rectangle courtBounds{ 0.0f, 0.0f, 1000.0f, 600.0f };
     Vector2 twoVTwoSpawn1{ -50.0f, 300.0f };
@@ -1416,6 +1533,9 @@ void RunAllSmokeTests() {
 
     SmokeTestGameModes();
     std::printf("SmokeTestGameModes passed\n");
+
+    SmokeTestTwoVTwoPopulationGate();
+    std::printf("SmokeTestTwoVTwoPopulationGate passed\n");
 
     SmokeTestRevivalItemSpawnLocations();
     std::printf("SmokeTestRevivalItemSpawnLocations passed\n");
@@ -1509,11 +1629,20 @@ static void ResetPotatoForNewRound(HotPotato& potato, Session& session, const bo
 // goes back to false) and respawns the potato exactly like a normal round reset.
 // Triggered out-of-band by the debug menu's "New Match" button (DebugAction::NewMatch);
 // session-scoped, so it deliberately lives here rather than in ApplyDebugAction.
-static void StartNewMatch(Session& session, MatchState& match, HotPotato& potato, float* chargeTimer) {
+static void StartNewMatch(Session& session, MatchState& match, HotPotato& potato, float* chargeTimer,
+                          GameMode mode) {
     match = MatchState{};
     bool active[kMaxPlayersPerSession];
     for (int i = 0; i < kMaxPlayersPerSession; i++) {
         active[i] = session.slots[i].state == SlotState::Connected;
+    }
+    if (!HotPotatoGameplayEnabled(mode, active)) {
+        // Under-populated 2v2 (or RevivePotionTest, which never calls this): leave the
+        // potato inert rather than handing it to someone in a session that isn't allowed
+        // to run gameplay yet. The tick seeds it once the population gate opens.
+        potato = HotPotato{};
+        for (int i = 0; i < kMaxPlayersPerSession; i++) chargeTimer[i] = 0.0f;
+        return;
     }
     ResetPotatoForNewRound(potato, session, active, chargeTimer);
 }
@@ -1565,7 +1694,30 @@ static void SimulateSessionTick(Session& session, std::vector<WorldItem>& items,
         }
     }
 
-    if (mode != GameMode::RevivePotionTest) {
+    // 2v2 needs all four slots filled before any potato action or scoring may happen —
+    // see HotPotatoGameplayEnabled in MatchState.h for why. While under-populated, the
+    // potato is forced inert so no stale held/in-flight state (e.g. the held potato seeded
+    // at room creation) is broadcast as if a live round were running; the client renders a
+    // "Waiting for 4 players..." state off exactly that condition. FFA and RevivePotionTest
+    // behavior is untouched.
+    const bool potatoEnabled = HotPotatoGameplayEnabled(mode, active);
+    if (mode == GameMode::TwoVTwo && !potatoEnabled) {
+        potato.held = false;
+        potato.inFlight = false;
+        potato.holderSlot = -1;
+        potato.velocity = Vector2{ 0.0f, 0.0f };
+        potato.justThrown = false;
+        for (int i = 0; i < kMaxPlayersPerSession; i++) chargeTimer[i] = 0.0f;
+    }
+
+    // The gate just opened (a 4th player joined a 2v2 room that was waiting): the potato
+    // was left inert above, so seed a fresh round now. 2v2-only; FFA never reaches here.
+    if (potatoEnabled && mode == GameMode::TwoVTwo && !match.matchOver &&
+        !potato.held && !potato.inFlight) {
+        ResetPotatoForNewRound(potato, session, active, chargeTimer);
+    }
+
+    if (potatoEnabled) {
     // --- Hot Potato: charge tracking, throw, flight, catch, explosion ---
     bool soloMode = false;
     {
@@ -1764,7 +1916,11 @@ int main(int argc, char** argv) {
     std::printf("Server listening on UDP port %d\n", (int)kServerPort);
 
     SessionManager sessionManager;
-    HazardZone hazard{ Rectangle{450.0f, 200.0f, 100.0f, 200.0f} }; // retained per Global Constraints; not applied to Hot Potato sessions this phase
+    // Shared by every session; damage is applied per-mode inside SimulateSessionTick —
+    // only RevivePotionTest sessions take hazard damage (it uses the Classic HP-loss
+    // down-trigger). FFA and 2v2 sessions are still SENT the zone for rendering, but
+    // standing in it costs them nothing.
+    HazardZone hazard{ Rectangle{450.0f, 200.0f, 100.0f, 200.0f} };
     Rectangle courtBounds{ 0.0f, 0.0f, 1000.0f, 600.0f };
 
     // Track world items and unreliable-send sequence counters per session name,
@@ -1848,10 +2004,20 @@ int main(int argc, char** argv) {
                                 }
                                 sessionSnapshotSeq[outcome.roomCode] = 1;
                                 HotPotato freshPotato{};
-                                freshPotato.held = true;
-                                freshPotato.holderSlot = 0; // slot 0 (the room creator) always starts holding; simplest deterministic choice for this phase
-                                freshPotato.position = session->slots[0].player.position;
-                                freshPotato.explodeTimer = ComputeExplodeTimerForCatch(0);
+                                if (msg.requestedMode == GameMode::FFA) {
+                                    freshPotato.held = true;
+                                    freshPotato.holderSlot = 0; // slot 0 (the room creator) always starts holding; simplest deterministic choice for this phase
+                                    freshPotato.position = session->slots[0].player.position;
+                                    freshPotato.explodeTimer = ComputeExplodeTimerForCatch(0);
+                                } else {
+                                    // TwoVTwo and RevivePotionTest start with an INERT potato
+                                    // (held=false, inFlight=false, holderSlot=-1, the HotPotato{}
+                                    // defaults). RevivePotionTest has no potato at all, and 2v2
+                                    // must not look like a live round until four players are
+                                    // connected — the tick seeds 2v2's real potato once the
+                                    // population gate opens. Snapshots therefore never claim a
+                                    // held potato exists in a mode/state where one doesn't.
+                                }
                                 sessionPotato[outcome.roomCode] = freshPotato;
                                 sessionMatch[outcome.roomCode] = MatchState{};
                                 sessionGameMode[outcome.roomCode] = msg.requestedMode;
@@ -1863,7 +2029,13 @@ int main(int argc, char** argv) {
                                 Player::kReviveHp, Player::kRespawnHp, Player::kAttackCooldown,
                                 Player::kAttackRange, Player::kAttackDamage, Player::kChannelDuration,
                                 kHazardDamagePerSecond, Inventory::kCapacity, {},
-                                sessionGameMode[outcome.roomCode]
+                                // Explicit defensive fallback, matching the tick loop's
+                                // `.count(...) ? ... : GameMode::FFA` idiom: the creation block
+                                // above always populates this entry first, so a miss should be
+                                // impossible — but read it the same explicit way in both places
+                                // rather than letting operator[] silently insert a default.
+                                sessionGameMode.count(outcome.roomCode)
+                                    ? sessionGameMode[outcome.roomCode] : GameMode::FFA
                             };
                             std::strncpy(welcome.roomCode, outcome.roomCode.c_str(), sizeof(welcome.roomCode) - 1);
                             PlayerSlot& slot = session->slots[outcome.slotIndex];
@@ -1943,9 +2115,17 @@ int main(int argc, char** argv) {
                                         if (deliveredReq.action == DebugAction::NewMatch) {
                                             // Session-scoped action: resets this room's MatchState and
                                             // respawns the potato. targetSlot is ignored by design.
-                                            StartNewMatch(*session, sessionMatch[loc.sessionName],
-                                                          sessionPotato[loc.sessionName],
-                                                          sessionChargeTimer[loc.sessionName]);
+                                            // No-op for RevivePotionTest, which has no match, round
+                                            // or potato concept — "start a new match" is meaningless
+                                            // there and would only seed a bogus held potato.
+                                            GameMode sessionMode = sessionGameMode.count(loc.sessionName)
+                                                ? sessionGameMode[loc.sessionName] : GameMode::FFA;
+                                            if (sessionMode != GameMode::RevivePotionTest) {
+                                                StartNewMatch(*session, sessionMatch[loc.sessionName],
+                                                              sessionPotato[loc.sessionName],
+                                                              sessionChargeTimer[loc.sessionName],
+                                                              sessionMode);
+                                            }
                                         } else if (deliveredReq.targetSlot < kMaxPlayersPerSession) {
                                             ApplyDebugAction(session->slots[deliveredReq.targetSlot].player, deliveredReq.action);
                                         }

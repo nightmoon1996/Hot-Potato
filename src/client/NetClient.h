@@ -25,6 +25,10 @@ public:
     GameMode GetGameMode() const { return gameConstants.gameMode; }
     bool IsConnected() const { return connected; }
     bool HasReceivedSnapshot() const { return receivedSnapshot; }
+    // Mirrors HasReceivedSnapshot: gameConstants is zero-initialized, and GameMode value 0
+    // is FFA, so GetGameMode() would confidently report "FFA" before any Welcome has
+    // actually arrived. Callers rendering mode-dependent UI must gate on this.
+    bool HasReceivedWelcome() const { return receivedWelcome; }
     const char* GetRoomCode() const { return gameConstants.roomCode; }
     RejectReason GetLastRejectReason() const { return lastRejectReason; }
 
@@ -42,6 +46,7 @@ private:
     WelcomeMsg gameConstants{};
     SnapshotMsg latestSnapshot{};
     bool receivedSnapshot = false;
+    bool receivedWelcome = false;
     uint32_t lastAcceptedSnapshotSeq = 0;
     uint32_t nextUnreliableSeq = 1;
 
