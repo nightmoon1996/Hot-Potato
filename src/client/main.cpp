@@ -117,6 +117,16 @@ int main(int argc, char** argv)
             DrawCircleV(particle.pos, 3.0f, Fade(particle.color, alpha));
         }
 
+        for (int i = 0; i < effects.GetDamageNumberCount(); i++) {
+            const DamageNumber& dmgNum = effects.GetDamageNumbers()[i];
+            if (!dmgNum.active) continue;
+            float alpha = 1.0f - (dmgNum.age / dmgNum.lifetime);
+            if (alpha < 0.0f) alpha = 0.0f;
+            const char* text = TextFormat("-%d", dmgNum.value);
+            Color textColor = Fade(RED, alpha);
+            DrawText(text, (int)dmgNum.pos.x - 6, (int)dmgNum.pos.y - 10, 16, textColor);
+        }
+
         EndMode2D();
 
         DrawText(TextFormat("You are slot %d. WASD move, E pickup/revive, Q attack.", (int)mySlot), 10, 10, 16, BLACK);
