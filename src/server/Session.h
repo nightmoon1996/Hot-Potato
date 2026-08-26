@@ -5,6 +5,7 @@
 #include "../shared/Geometry.h"
 #include "Player.h"
 #include "../shared/ReliableChannel.h"
+#include "../shared/Protocol.h"
 
 static constexpr Vector2 kSlot0Spawn{ 100.0f, 100.0f };   // top-left
 static constexpr Vector2 kSlot1Spawn{ 900.0f, 100.0f };   // top-right
@@ -34,10 +35,10 @@ struct PlayerSlot {
 
 class Session {
 public:
-    PlayerSlot slots[4];
+    PlayerSlot slots[kMaxPlayersPerSession];
 
     int FindEmptySlot() const {
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < kMaxPlayersPerSession; i++) {
             if (slots[i].state == SlotState::Empty) {
                 return i;
             }
@@ -49,7 +50,7 @@ public:
         if (token == 0) {
             return -1;
         }
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < kMaxPlayersPerSession; i++) {
             if (slots[i].state == SlotState::DisconnectedPending && slots[i].sessionToken == token) {
                 return i;
             }
@@ -58,7 +59,7 @@ public:
     }
 
     void CheckTimeouts(double nowSeconds) {
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < kMaxPlayersPerSession; i++) {
             if (slots[i].state == SlotState::Connected &&
                 nowSeconds - slots[i].lastPacketAtSeconds >= 60.0) {
                 slots[i].state = SlotState::DisconnectedPending;

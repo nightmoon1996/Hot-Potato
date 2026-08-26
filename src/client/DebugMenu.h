@@ -20,9 +20,9 @@ public:
         DrawRectangle(150, 150, 700, 260, RAYWHITE);
         DrawText("DEBUG MENU (F1 to close)", 170, 160, 16, BLACK);
 
-        const char* labels[4] = { "P1 (slot 0)", "P2 (slot 1)", "P3 (slot 2)", "P4 (slot 3)" };
-        Color colors[4] = { BLUE, MAROON, GREEN, PURPLE };
-        for (int i = 0; i < 4; i++) {
+        const char* labels[kMaxPlayersPerSession] = { "P1 (slot 0)", "P2 (slot 1)", "P3 (slot 2)", "P4 (slot 3)" };
+        Color colors[kMaxPlayersPerSession] = { BLUE, MAROON, GREEN, PURPLE };
+        for (int i = 0; i < kMaxPlayersPerSession; i++) {
             int x = 170 + i * 170;
             DrawText(labels[i], x, 190, 14, colors[i]);
             HandleColumn(netClient, (uint8_t)i, x, 210);

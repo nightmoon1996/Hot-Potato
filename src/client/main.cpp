@@ -136,9 +136,9 @@ int main(int argc, char** argv)
             }
         };
 
-        static const Color kPlayerColors[4] = { BLUE, MAROON, GREEN, PURPLE };
-        static const char* kPlayerLabels[4] = { "P1", "P2", "P3", "P4" };
-        for (int i = 0; i < 4; i++) {
+        static const Color kPlayerColors[kMaxPlayersPerSession] = { BLUE, MAROON, GREEN, PURPLE };
+        static const char* kPlayerLabels[kMaxPlayersPerSession] = { "P1", "P2", "P3", "P4" };
+        for (int i = 0; i < kMaxPlayersPerSession; i++) {
             drawPlayer(i, snap.players[i], kPlayerColors[i], kPlayerLabels[i]);
         }
 

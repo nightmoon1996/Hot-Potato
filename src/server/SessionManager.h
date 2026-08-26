@@ -58,7 +58,7 @@ public:
             newSession.slots[0].clientIp = clientIp;
             newSession.slots[0].clientPort = clientPort;
             newSession.slots[0].lastPacketAtSeconds = nowSeconds;
-            for (int i = 0; i < 4; i++) {
+            for (int i = 0; i < kMaxPlayersPerSession; i++) {
                 newSession.slots[i].player = Player(kSpawnPoints[i]);
             }
             sessions[code] = newSession;

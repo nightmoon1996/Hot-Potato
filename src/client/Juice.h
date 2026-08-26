@@ -57,16 +57,18 @@ public:
 
 private:
     // Diff caches (previous frame's values)
-    int prevHp[4] = {0, 0, 0, 0};
-    uint8_t prevState[4] = {kSnapshotStateAbsent, kSnapshotStateAbsent, kSnapshotStateAbsent, kSnapshotStateAbsent};
-    int prevPotionCount[4] = {0, 0, 0, 0};
+    int prevHp[kMaxPlayersPerSession] = {0, 0, 0, 0};
+    uint8_t prevState[kMaxPlayersPerSession] = {kSnapshotStateAbsent, kSnapshotStateAbsent, kSnapshotStateAbsent, kSnapshotStateAbsent};
+    int prevPotionCount[kMaxPlayersPerSession] = {0, 0, 0, 0};
+    // Intentionally 2, not kMaxPlayersPerSession: these mirror SnapshotMsg::items, whose
+    // size is unrelated to player count (a later phase reworks item spawning).
     bool prevItemActive[2] = {false, false};
     Vector2 prevItemPos[2]{};
     bool hasPrevFrame = false;
 
     // Presentation state
-    float displayedHp[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-    float hitFlashTimer[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    float displayedHp[kMaxPlayersPerSession] = {0.0f, 0.0f, 0.0f, 0.0f};
+    float hitFlashTimer[kMaxPlayersPerSession] = {0.0f, 0.0f, 0.0f, 0.0f};
     float shakeTrauma = 0.0f;
 
     Particle particles[kMaxParticles]{};

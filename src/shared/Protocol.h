@@ -2,6 +2,10 @@
 
 #include <cstdint>
 
+// Maximum players (and therefore slots) per session. Shared by client and server
+// so array sizes and loop bounds on both sides stay in lockstep.
+static constexpr int kMaxPlayersPerSession = 4;
+
 enum class MessageType : uint8_t {
     ConnectRequest,
     Welcome,
@@ -91,7 +95,9 @@ struct WorldItemSnapshot {
 };
 
 struct SnapshotMsg {
-    PlayerSnapshot players[4];
+    PlayerSnapshot players[kMaxPlayersPerSession];
+    // Intentionally 2, not kMaxPlayersPerSession: the world-item count is unrelated to
+    // player count (a later phase reworks item spawning). Do not "fix" this to match above.
     WorldItemSnapshot items[2];
     float hazardX;
     float hazardY;
