@@ -1,12 +1,7 @@
 #pragma once
 
 #include <raylib-cpp.hpp>
-#include "server/Player.h"
-
-struct DebugButton {
-    Rectangle bounds;
-    const char* label;
-};
+#include "NetClient.h"
 
 class DebugMenu {
 public:
@@ -16,7 +11,7 @@ public:
         visible = !visible;
     }
 
-    void DrawAndHandle(Player& p1, Player& p2) {
+    void DrawAndHandle(NetClient& netClient) {
         if (!visible) {
             return;
         }
@@ -25,16 +20,17 @@ public:
         DrawRectangle(300, 150, 400, 260, RAYWHITE);
         DrawText("DEBUG MENU (F1 to close)", 320, 160, 16, BLACK);
 
-        DrawText("P1", 340, 190, 16, BLUE);
-        DrawText("P2", 540, 190, 16, MAROON);
+        DrawText("P1 (slot 0)", 340, 190, 16, BLUE);
+        DrawText("P2 (slot 1)", 540, 190, 16, MAROON);
 
-        HandleColumn(p1, 320, 210);
-        HandleColumn(p2, 520, 210);
+        HandleColumn(netClient, 0, 320, 210);
+        HandleColumn(netClient, 1, 520, 210);
     }
 
 private:
-    void HandleColumn(Player& p, int x, int startY) {
+    void HandleColumn(NetClient& netClient, uint8_t targetSlot, int x, int startY) {
         const char* labels[5] = { "Kill", "Revive", "Heal Full", "Give Potion", "Force Down" };
+        DebugAction actions[5] = { DebugAction::Kill, DebugAction::Revive, DebugAction::HealFull, DebugAction::GivePotion, DebugAction::ForceDown };
         for (int i = 0; i < 5; i++) {
             Rectangle bounds{ (float)x, (float)(startY + i * 40), 150.0f, 30.0f };
             DrawRectangleRec(bounds, LIGHTGRAY);
@@ -43,23 +39,8 @@ private:
 
             if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
                 CheckCollisionPointRec(GetMousePosition(), bounds)) {
-                ApplyAction(p, i);
+                netClient.SendDebugAction(actions[i], targetSlot);
             }
-        }
-    }
-
-    void ApplyAction(Player& p, int index) {
-        switch (index) {
-            case 0: p.Kill(); break;
-            case 1:
-                if (p.state == PlayerState::Downed) p.ReviveFromDowned();
-                else if (p.state == PlayerState::Dead) p.RespawnFull();
-                break;
-            case 2:
-                if (p.state == PlayerState::Alive) p.hp = Player::kMaxHp;
-                break;
-            case 3: p.inventory.Add(ItemType::RevivePotion); break;
-            case 4: p.ForceDown(); break;
         }
     }
 };
