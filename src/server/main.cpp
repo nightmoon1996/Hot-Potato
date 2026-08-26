@@ -1361,6 +1361,19 @@ void SmokeTestGameModes() {
     }
 }
 
+void SmokeTestRevivalItemSpawnLocations() {
+    Rectangle courtBounds{ 0.0f, 0.0f, 1000.0f, 600.0f };
+    Vector2 twoVTwoSpawn1{ -50.0f, 300.0f };
+    Vector2 twoVTwoSpawn2{ 1050.0f, 300.0f };
+    assert(!PointInRect(twoVTwoSpawn1, courtBounds));
+    assert(!PointInRect(twoVTwoSpawn2, courtBounds));
+
+    Vector2 ffaSpawn1{ 300.0f, 500.0f };
+    Vector2 ffaSpawn2{ 700.0f, 100.0f };
+    assert(PointInRect(ffaSpawn1, courtBounds));
+    assert(PointInRect(ffaSpawn2, courtBounds));
+}
+
 void RunAllSmokeTests() {
     SmokeTestSerialization();
     std::printf("SmokeTestSerialization passed\n");
@@ -1403,6 +1416,9 @@ void RunAllSmokeTests() {
 
     SmokeTestGameModes();
     std::printf("SmokeTestGameModes passed\n");
+
+    SmokeTestRevivalItemSpawnLocations();
+    std::printf("SmokeTestRevivalItemSpawnLocations passed\n");
 
     std::printf("All smoke tests passed\n");
 }
@@ -1811,10 +1827,20 @@ int main(int argc, char** argv) {
                         } else {
                             Session* session = sessionManager.GetSession(outcome.roomCode);
                             if (sessionWorldItems.find(outcome.roomCode) == sessionWorldItems.end()) {
-                                sessionWorldItems[outcome.roomCode] = {
-                                    WorldItem{ Vector2{300.0f, 500.0f}, ItemType::RevivePotion, true },
-                                    WorldItem{ Vector2{700.0f, 100.0f}, ItemType::RevivePotion, true },
-                                };
+                                if (msg.requestedMode == GameMode::TwoVTwo) {
+                                    // 2v2: revive items spawn OUTSIDE the court, so fetching one
+                                    // costs a teammate real time away from the potato action.
+                                    sessionWorldItems[outcome.roomCode] = {
+                                        WorldItem{ Vector2{-50.0f, 300.0f}, ItemType::RevivePotion, true },  // just left of the court
+                                        WorldItem{ Vector2{1050.0f, 300.0f}, ItemType::RevivePotion, true }, // just right of the court
+                                    };
+                                } else {
+                                    // FFA and RevivePotionTest: original in-arena positions.
+                                    sessionWorldItems[outcome.roomCode] = {
+                                        WorldItem{ Vector2{300.0f, 500.0f}, ItemType::RevivePotion, true },
+                                        WorldItem{ Vector2{700.0f, 100.0f}, ItemType::RevivePotion, true },
+                                    };
+                                }
                                 for (int i = 0; i < kMaxPlayersPerSession; i++) {
                                     sessionHazardCarry[outcome.roomCode][i] = 0.0f;
                                     sessionChargeTimer[outcome.roomCode][i] = 0.0f;
