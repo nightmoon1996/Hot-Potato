@@ -921,6 +921,63 @@ void SmokeTestMatchState() {
     }
 }
 
+void SmokeTestTeamScoring() {
+    // TeamForSlot mapping
+    assert(TeamForSlot(0) == 0);
+    assert(TeamForSlot(1) == 0);
+    assert(TeamForSlot(2) == 1);
+    assert(TeamForSlot(3) == 1);
+
+    // ScoreRoundEndTeam credits the OPPOSITE team, not the excluded player's own team
+    {
+        MatchState match{};
+        bool active[kMaxPlayersPerSession] = { true, true, true, true };
+        ScoreRoundEndTeam(match, active, 0); // slot 0 (Team A) is the cause -> Team B scores
+        assert(match.teamScore[0] == 0);
+        assert(match.teamScore[1] == 1);
+    }
+    {
+        MatchState match{};
+        bool active[kMaxPlayersPerSession] = { true, true, true, true };
+        ScoreRoundEndTeam(match, active, 2); // slot 2 (Team B) is the cause -> Team A scores
+        assert(match.teamScore[0] == 1);
+        assert(match.teamScore[1] == 0);
+    }
+
+    // Full 3-round match: Team A wins outright
+    {
+        MatchState match{};
+        bool active[kMaxPlayersPerSession] = { true, true, true, true };
+        for (int r = 0; r < kRoundsPerMatch; r++) {
+            ScoreRoundEndTeam(match, active, 2); // Team B always the cause -> Team A scores every round
+            AdvanceRoundOrEndMatchTeam(match);
+        }
+        assert(match.matchOver == true);
+        assert(match.winnerSlot == 0); // Team A (index 0) won
+        assert(match.teamScore[0] == 3);
+        assert(match.teamScore[1] == 0);
+    }
+
+    // Tiebreak entry and resolution, tested via DIRECT state construction (see IMPORTANT NOTE below
+    // for why a "3 rounds of alternating credit" approach cannot produce a tie and must not be used)
+    {
+        MatchState match{};
+        match.teamScore[0] = 1;
+        match.teamScore[1] = 1;
+        match.roundNumber = kRoundsPerMatch; // about to advance past the last normal round, tied
+        AdvanceRoundOrEndMatchTeam(match);
+        assert(match.matchOver == false);
+        assert(match.inTiebreak == true);
+
+        // Next round-end during the tiebreak resolves it immediately in favor of whichever team scores
+        bool active[kMaxPlayersPerSession] = { true, true, true, true };
+        ScoreRoundEndTeam(match, active, 2); // Team B is the cause -> Team A scores -> Team A now leads 2-1
+        AdvanceRoundOrEndMatchTeam(match);
+        assert(match.matchOver == true);
+        assert(match.winnerSlot == 0); // Team A won the tiebreak
+    }
+}
+
 void SmokeTestMatchOverFreezeAndNewMatch() {
     const float dt = 1.0f / 60.0f;
 
@@ -1335,6 +1392,9 @@ void RunAllSmokeTests() {
     SmokeTestMatchState();
     std::printf("SmokeTestMatchState passed\n");
 
+    SmokeTestTeamScoring();
+    std::printf("SmokeTestTeamScoring passed\n");
+
     SmokeTestMatchOverFreezeAndNewMatch();
     std::printf("SmokeTestMatchOverFreezeAndNewMatch passed\n");
 
@@ -1587,8 +1647,13 @@ static void SimulateSessionTick(Session& session, std::vector<WorldItem>& items,
                     // Multiplayer: leaving the court downs the last thrower, scores the
                     // round, and starts a new round (or ends the match).
                     session.slots[potato.lastThrowerSlot].player.ForceDown();
-                    ScoreRoundEnd(match, active, potato.lastThrowerSlot);
-                    AdvanceRoundOrEndMatch(match, active);
+                    if (mode == GameMode::TwoVTwo) {
+                        ScoreRoundEndTeam(match, active, potato.lastThrowerSlot);
+                        AdvanceRoundOrEndMatchTeam(match);
+                    } else {
+                        ScoreRoundEnd(match, active, potato.lastThrowerSlot);
+                        AdvanceRoundOrEndMatch(match, active);
+                    }
                     // Respawn held by the first Alive active player (deterministic slot
                     // order), via the shared ResetPotatoForNewRound helper.
                     ResetPotatoForNewRound(potato, session, active, chargeTimer);
@@ -1612,8 +1677,13 @@ static void SimulateSessionTick(Session& session, std::vector<WorldItem>& items,
         if (potato.explodeTimer <= 0.0f) {
             int exploderSlot = potato.holderSlot;
             session.slots[exploderSlot].player.ForceDown();
-            ScoreRoundEnd(match, active, exploderSlot);
-            AdvanceRoundOrEndMatch(match, active);
+            if (mode == GameMode::TwoVTwo) {
+                ScoreRoundEndTeam(match, active, exploderSlot);
+                AdvanceRoundOrEndMatchTeam(match);
+            } else {
+                ScoreRoundEnd(match, active, exploderSlot);
+                AdvanceRoundOrEndMatch(match, active);
+            }
             ResetPotatoForNewRound(potato, session, active, chargeTimer);
         }
     }
@@ -1924,6 +1994,8 @@ int main(int argc, char** argv) {
                 matchSnap.matchOver = match.matchOver;
                 matchSnap.winnerSlot = match.winnerSlot;
                 matchSnap.inTiebreak = match.inTiebreak;
+                matchSnap.teamScore[0] = match.teamScore[0];
+                matchSnap.teamScore[1] = match.teamScore[1];
                 snap.match = matchSnap;
 
                 std::vector<uint8_t> snapBytes;

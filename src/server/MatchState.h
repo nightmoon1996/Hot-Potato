@@ -2,9 +2,15 @@
 
 #include "../shared/Protocol.h"
 
+// Fixed team assignment for 2v2: slots 0+1 = Team A (0), slots 2+3 = Team B (1).
+inline int TeamForSlot(int slot) {
+    return (slot < 2) ? 0 : 1;
+}
+
 struct MatchState {
     int roundNumber = 1; // 1-indexed; 1..kRoundsPerMatch during normal play, stays at kRoundsPerMatch+something conceptually once in tiebreak (tiebreak rounds don't increment past the cap the same way — see AdvanceRoundOrEndMatch)
     int roundScore[kMaxPlayersPerSession] = {0, 0, 0, 0};
+    int teamScore[2] = {0, 0}; // 2v2 only: teamScore[0] = Team A (slots 0-1), teamScore[1] = Team B (slots 2-3)
     bool matchOver = false;
     int winnerSlot = -1; // -1 until matchOver is true and exactly one winner is determined
     bool inTiebreak = false;
@@ -97,5 +103,48 @@ inline void AdvanceRoundOrEndMatch(MatchState& match, const bool* active) {
         // maxCount == 0 (no active players at all): match simply doesn't resolve; leave
         // matchOver false. This is an edge case with no active players to declare a winner
         // among — not expected in practice but must not crash.
+    }
+}
+
+// 2v2 variant of ScoreRoundEnd: credits the NON-losing team's teamScore, not individual
+// players. `excludedSlot` is the round's cause (exploded holder / out-of-bounds thrower);
+// the team OPPOSITE that player's team gets +1. Tiebreak eligibility (when inTiebreak) is
+// tracked per-team here rather than per-slot — reuses the same tiebreakEligible[4] array,
+// but only ever needs indices 0/1 meaningfully populated for a 2-team tiebreak (2v2 never
+// has more than 2 contending parties, so the richer per-slot narrowing FFA's tiebreak needs
+// is unnecessary complexity here; a direct 2-team comparison suffices).
+inline void ScoreRoundEndTeam(MatchState& match, const bool* active, int excludedSlot) {
+    if (excludedSlot < 0 || excludedSlot >= kMaxPlayersPerSession) return;
+    int losingTeam = TeamForSlot(excludedSlot);
+    int winningTeam = 1 - losingTeam;
+    match.teamScore[winningTeam] += 1;
+}
+
+// 2v2 variant of AdvanceRoundOrEndMatch: exactly 2 teams, so a tie is always a straight
+// 2-way tie — no eligibility-narrowing tiebreak loop is needed (that complexity in the FFA
+// path exists to handle 3+ tied parties, which cannot happen with exactly 2 teams). The
+// very next round-end's scoring (which team gets credited) IS the tiebreak resolution.
+inline void AdvanceRoundOrEndMatchTeam(MatchState& match) {
+    if (match.matchOver) return;
+
+    if (match.inTiebreak) {
+        // Any single round-end during a tiebreak immediately decides it: whichever team
+        // just scored (i.e. now leads) wins outright, since with 2 teams "still tied" after
+        // a scoring round-end is impossible (only one team's score can change per round-end).
+        if (match.teamScore[0] != match.teamScore[1]) {
+            match.matchOver = true;
+            match.winnerSlot = (match.teamScore[0] > match.teamScore[1]) ? 0 : 1; // stores the WINNING TEAM index, not a player slot, for 2v2's HUD to interpret
+        }
+        return;
+    }
+
+    match.roundNumber += 1;
+    if (match.roundNumber > kRoundsPerMatch) {
+        if (match.teamScore[0] != match.teamScore[1]) {
+            match.matchOver = true;
+            match.winnerSlot = (match.teamScore[0] > match.teamScore[1]) ? 0 : 1;
+        } else {
+            match.inTiebreak = true;
+        }
     }
 }

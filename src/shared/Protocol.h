@@ -132,6 +132,7 @@ struct MatchSnapshot {
     bool matchOver;
     int winnerSlot; // -1 if undecided
     bool inTiebreak;
+    int teamScore[2]; // 2v2 only: teamScore[0] = Team A (slots 0-1), teamScore[1] = Team B (slots 2-3)
 };
 
 struct SnapshotMsg {
