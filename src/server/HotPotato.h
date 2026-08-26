@@ -58,6 +58,44 @@ inline float DistanceBetween2(Vector2 a, Vector2 b) {
     return std::sqrt(dx * dx + dy * dy);
 }
 
+// Minimum distance from `point` to the line SEGMENT from `segStart` to `segEnd` (not the
+// infinite line through them). Used by the dash-time catch check: a dash teleports the
+// player kDashDistance(150) in one step, which is 7.5x the kCatchRadius(20) catch diameter,
+// so a point-sample of only the post-dash position can miss a potato the dash swept through.
+inline float DistancePointToSegment(Vector2 point, Vector2 segStart, Vector2 segEnd) {
+    Vector2 segVec{ segEnd.x - segStart.x, segEnd.y - segStart.y };
+    float segLenSq = segVec.x * segVec.x + segVec.y * segVec.y;
+    if (segLenSq < 0.0001f) {
+        // Degenerate segment (start == end): just measure to the single point.
+        return DistanceBetween2(point, segStart);
+    }
+    Vector2 toPoint{ point.x - segStart.x, point.y - segStart.y };
+    float t = (toPoint.x * segVec.x + toPoint.y * segVec.y) / segLenSq;
+    if (t < 0.0f) t = 0.0f;
+    if (t > 1.0f) t = 1.0f;
+    Vector2 closest{ segStart.x + segVec.x * t, segStart.y + segVec.y * t };
+    return DistanceBetween2(point, closest);
+}
+
+// True if the swept dash segment from `dashStart` to `dashEnd` passes within kCatchRadius
+// of the potato's current position, i.e. the dashing player should catch it.
+inline bool DashSegmentCatchesPotato(Vector2 dashStart, Vector2 dashEnd, Vector2 potatoPos) {
+    return DistancePointToSegment(potatoPos, dashStart, dashEnd) <= kCatchRadius;
+}
+
+// Applies the catch resolution to `potato` for `catcherSlot` at `catcherPos`. This is the
+// single source of truth for "someone caught the potato": mirrored by both the tick loop's
+// FindCatchTarget path and the dash-time swept-segment path.
+inline void ResolveCatch(HotPotato& potato, int catcherSlot, Vector2 catcherPos) {
+    potato.held = true;
+    potato.inFlight = false;
+    potato.holderSlot = catcherSlot;
+    potato.velocity = Vector2{0.0f, 0.0f};
+    potato.position = catcherPos;
+    potato.catchCount += 1;
+    potato.explodeTimer = ComputeExplodeTimerForCatch(potato.catchCount);
+}
+
 // Returns the slot index of the first active, non-excluded player within kCatchRadius of
 // the potato's current position, or -1 if none. `excludeSlot` prevents an instantaneous
 // self-catch check on the exact tick of release (pass the thrower's slot on the release

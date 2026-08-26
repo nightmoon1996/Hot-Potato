@@ -1082,41 +1082,39 @@ void SmokeTestDash() {
         assert(std::fabs(dest.x - (bounds.x + bounds.width)) < 0.001f); // clamped exactly to the edge
     }
 
-    // Full integration via the Input-message-handling path: dash moves the player,
-    // respects cooldown (a second immediate dash attempt is a no-op), and the
-    // stationary-dash-uses-facing-direction fallback works.
-    // (Since the dash-application code lives in main()'s packet-receive loop rather than
-    // a standalone testable function, this smoke test constructs the equivalent scenario
-    // directly against a Player object using the same ResolveDashDirection/
-    // ComputeDashDestination helpers Task 3 wires into that loop, rather than attempting
-    // to simulate a full UDP packet round-trip — this still exercises the identical logic
-    // path since the loop's dash-handling code is a thin, direct call into these two
-    // functions plus a cooldown check, all of which are covered above and below.)
+    // ClampToCourtBounds: shared by dash and ordinary movement.
+    {
+        Rectangle bounds{ 0.0f, 0.0f, 1000.0f, 600.0f };
+        Vector2 clamped = ClampToCourtBounds(Vector2{-50.0f, 700.0f}, bounds);
+        assert(std::fabs(clamped.x - 0.0f) < 0.001f);
+        assert(std::fabs(clamped.y - 600.0f) < 0.001f);
+        Vector2 inside = ClampToCourtBounds(Vector2{500.0f, 300.0f}, bounds);
+        assert(std::fabs(inside.x - 500.0f) < 0.001f && std::fabs(inside.y - 300.0f) < 0.001f);
+    }
+
+    // TryApplyDash (the REAL production function main()'s Input handler calls): happy path,
+    // cooldown gating, facing-direction tracking, and the stationary facing fallback.
     {
         Player p(Vector2{100.0f, 100.0f});
         Rectangle bounds{ 0.0f, 0.0f, 1000.0f, 600.0f };
         assert(p.dashCooldownTimer <= 0.0f);
 
-        // Simulate: player moving right, dash pressed
-        Vector2 moveInput{1.0f, 0.0f};
-        p.facingDirection = Vector2{1.0f, 0.0f}; // already facing right from prior movement
-        if (p.dashCooldownTimer <= 0.0f) {
-            Vector2 dashDir = ResolveDashDirection(moveInput, p.facingDirection);
-            p.position = ComputeDashDestination(p.position, dashDir, bounds);
-            p.dashCooldownTimer = kDashCooldown;
-        }
+        // Moving right, dash pressed: dash applies and facingDirection updates.
+        assert(TryApplyDash(p, Vector2{1.0f, 0.0f}, true, bounds) == true);
         assert(std::fabs(p.position.x - (100.0f + kDashDistance)) < 0.001f);
+        assert(std::fabs(p.facingDirection.x - 1.0f) < 0.001f);
         assert(p.dashCooldownTimer == kDashCooldown);
 
-        // Immediately try to dash again: cooldown blocks it
+        // Immediately dashing again is blocked by the cooldown (position untouched).
         Vector2 posBeforeSecondAttempt = p.position;
-        if (p.dashCooldownTimer <= 0.0f) {
-            Vector2 dashDir = ResolveDashDirection(moveInput, p.facingDirection);
-            p.position = ComputeDashDestination(p.position, dashDir, bounds);
-            p.dashCooldownTimer = kDashCooldown;
-        }
+        assert(TryApplyDash(p, Vector2{1.0f, 0.0f}, true, bounds) == false);
         assert(p.position.x == posBeforeSecondAttempt.x);
         assert(p.position.y == posBeforeSecondAttempt.y);
+
+        // ...but facingDirection still tracks movement input while on cooldown.
+        assert(TryApplyDash(p, Vector2{0.0f, 1.0f}, false, bounds) == false);
+        assert(std::fabs(p.facingDirection.y - 1.0f) < 0.001f);
+        p.facingDirection = Vector2{1.0f, 0.0f}; // restore for the fallback check below
 
         // Tick the cooldown down to 0, confirm dash works again.
         // Use enough iterations to overshoot kDashCooldown (2s at 60Hz = 120 ticks
@@ -1133,12 +1131,101 @@ void SmokeTestDash() {
         }
         assert(p.dashCooldownTimer <= 0.0f);
         Vector2 posBeforeThirdAttempt = p.position;
-        if (p.dashCooldownTimer <= 0.0f) {
-            Vector2 dashDir = ResolveDashDirection(Vector2{0.0f, 0.0f}, p.facingDirection); // stationary: uses facing fallback
-            p.position = ComputeDashDestination(p.position, dashDir, bounds);
-            p.dashCooldownTimer = kDashCooldown;
+        // Stationary dash: no movement input, so it falls back to facingDirection (+X).
+        assert(TryApplyDash(p, Vector2{0.0f, 0.0f}, true, bounds) == true);
+        assert(std::fabs(p.position.x - (posBeforeThirdAttempt.x + kDashDistance)) < 0.001f);
+
+        // dashPressed false on a ready cooldown is a no-op that does not set the cooldown.
+        Player q(Vector2{100.0f, 100.0f});
+        assert(TryApplyDash(q, Vector2{1.0f, 0.0f}, false, bounds) == false);
+        assert(q.dashCooldownTimer == 0.0f);
+        assert(q.position.x == 100.0f);
+    }
+
+    // TryApplyDash: a Downed or Dead player cannot dash, and the attempt must not touch
+    // their position, dashCooldownTimer, or facingDirection.
+    {
+        Rectangle bounds{ 0.0f, 0.0f, 1000.0f, 600.0f };
+        for (PlayerState blocked : { PlayerState::Downed, PlayerState::Dead }) {
+            Player p(Vector2{100.0f, 100.0f});
+            p.state = blocked;
+            p.facingDirection = Vector2{1.0f, 0.0f};
+            assert(TryApplyDash(p, Vector2{0.0f, 1.0f}, true, bounds) == false);
+            assert(p.position.x == 100.0f && p.position.y == 100.0f);
+            assert(p.dashCooldownTimer == 0.0f); // must NOT burn the cooldown on a rejected dash
+            assert(std::fabs(p.facingDirection.x - 1.0f) < 0.001f); // facing untouched too
         }
-        assert(std::fabs(p.position.x - (posBeforeThirdAttempt.x + kDashDistance)) < 0.001f); // still moved right, via facingDirection fallback
+    }
+
+    // DistancePointToSegment: measures to the SEGMENT, not the infinite line through it.
+    {
+        // Perpendicular foot lands inside the segment.
+        assert(std::fabs(DistancePointToSegment(Vector2{50.0f, 30.0f}, Vector2{0.0f, 0.0f}, Vector2{100.0f, 0.0f}) - 30.0f) < 0.001f);
+        // Beyond the far endpoint: clamps to that endpoint (an infinite line would say 10).
+        assert(std::fabs(DistancePointToSegment(Vector2{150.0f, 10.0f}, Vector2{0.0f, 0.0f}, Vector2{100.0f, 0.0f}) - std::sqrt(50.0f * 50.0f + 100.0f)) < 0.001f);
+        // Before the near endpoint: clamps to the start.
+        assert(std::fabs(DistancePointToSegment(Vector2{-30.0f, 0.0f}, Vector2{0.0f, 0.0f}, Vector2{100.0f, 0.0f}) - 30.0f) < 0.001f);
+        // Degenerate segment (start == end): plain point-to-point distance.
+        assert(std::fabs(DistancePointToSegment(Vector2{3.0f, 4.0f}, Vector2{0.0f, 0.0f}, Vector2{0.0f, 0.0f}) - 5.0f) < 0.001f);
+    }
+
+    // TUNNELING FIX: a dash whose endpoints are BOTH well outside kCatchRadius of the
+    // potato, but whose swept segment passes within it, must catch the potato. This is the
+    // exact case the tick loop's post-dash point-sample misses.
+    {
+        Rectangle bounds{ 0.0f, 0.0f, 1000.0f, 600.0f };
+        Player p(Vector2{400.0f, 300.0f});
+        p.facingDirection = Vector2{1.0f, 0.0f};
+
+        HotPotato potato{};
+        potato.inFlight = true;
+        potato.holderSlot = -1;
+        potato.lastThrowerSlot = 1;
+        potato.velocity = Vector2{0.0f, 200.0f};
+        potato.catchCount = 2;
+        // Mid-segment (dash runs +X 150 units from x=400 to x=550), 5px off the dash line:
+        // both endpoints are 75+ units away, far beyond kCatchRadius(20).
+        potato.position = Vector2{475.0f, 305.0f};
+        assert(DistanceBetween2(potato.position, p.position) > kCatchRadius);
+
+        Vector2 preDashPos = p.position;
+        assert(TryApplyDash(p, Vector2{1.0f, 0.0f}, true, bounds) == true);
+        assert(DistanceBetween2(potato.position, p.position) > kCatchRadius); // post-dash point-sample also misses
+        assert(DashSegmentCatchesPotato(preDashPos, p.position, potato.position) == true);
+
+        int expectedCatchCount = potato.catchCount + 1;
+        ResolveCatch(potato, 0, p.position);
+        assert(potato.held == true);
+        assert(potato.inFlight == false);
+        assert(potato.holderSlot == 0);
+        assert(potato.velocity.x == 0.0f && potato.velocity.y == 0.0f);
+        assert(potato.position.x == p.position.x && potato.position.y == p.position.y);
+        assert(potato.catchCount == expectedCatchCount);
+        assert(std::fabs(potato.explodeTimer - ComputeExplodeTimerForCatch(expectedCatchCount)) < 0.001f);
+
+        // The tick loop's flight block is gated on inFlight, which ResolveCatch cleared —
+        // so a SimulateSessionTick later in the same tick can't double-process the flight.
+        assert(potato.inFlight == false);
+    }
+
+    // TUNNELING FIX, negative case: a dash segment that stays farther than kCatchRadius
+    // from the potato at every point must NOT catch it.
+    {
+        Rectangle bounds{ 0.0f, 0.0f, 1000.0f, 600.0f };
+        Player p(Vector2{400.0f, 300.0f});
+        p.facingDirection = Vector2{1.0f, 0.0f};
+        Vector2 preDashPos = p.position;
+        assert(TryApplyDash(p, Vector2{1.0f, 0.0f}, true, bounds) == true);
+
+        // 40px off the dash line: closest approach is 40 > kCatchRadius(20).
+        Vector2 potatoPos{ 475.0f, 340.0f };
+        assert(std::fabs(DistancePointToSegment(potatoPos, preDashPos, p.position) - 40.0f) < 0.001f);
+        assert(DashSegmentCatchesPotato(preDashPos, p.position, potatoPos) == false);
+
+        // Also negative: potato well past the END of the dash, on the dash line. An
+        // infinite-line test would (wrongly) call this a catch; the segment test must not.
+        Vector2 beyondEnd{ p.position.x + 100.0f, p.position.y };
+        assert(DashSegmentCatchesPotato(preDashPos, p.position, beyondEnd) == false);
     }
 }
 
@@ -1397,13 +1484,7 @@ static void SimulateSessionTick(Session& session, std::vector<WorldItem>& items,
         }
         int catcher = FindCatchTarget(potato.position, positions, catchEligible, kMaxPlayersPerSession, excludeSlot);
         if (catcher != -1) {
-            potato.held = true;
-            potato.inFlight = false;
-            potato.holderSlot = catcher;
-            potato.velocity = Vector2{0.0f, 0.0f};
-            potato.position = positions[catcher];
-            potato.catchCount += 1;
-            potato.explodeTimer = ComputeExplodeTimerForCatch(potato.catchCount);
+            ResolveCatch(potato, catcher, positions[catcher]);
         } else {
             bool outOfBounds = potato.position.x < courtBounds.x || potato.position.x > courtBounds.x + courtBounds.width ||
                                 potato.position.y < courtBounds.y || potato.position.y > courtBounds.y + courtBounds.height;
@@ -1617,19 +1698,41 @@ int main(int argc, char** argv) {
                                 if (slot.player.state == PlayerState::Alive) {
                                     slot.player.position.x += input.moveX * kMoveSpeed * (float)tickInterval;
                                     slot.player.position.y += input.moveY * kMoveSpeed * (float)tickInterval;
+                                    // Ordinary movement is clamped to the arena too, so dash
+                                    // (which has always clamped) isn't an unintended
+                                    // "return to arena" button for an out-of-bounds walker.
+                                    slot.player.position = ClampToCourtBounds(slot.player.position, courtBounds);
 
-                                    // Track facing direction whenever real movement input is
-                                    // present, regardless of whether a dash happens this packet —
-                                    // this is what a stationary dash falls back to.
-                                    float moveLen = std::sqrt(input.moveX * input.moveX + input.moveY * input.moveY);
-                                    if (moveLen > 0.0001f) {
-                                        slot.player.facingDirection = Vector2{ input.moveX / moveLen, input.moveY / moveLen };
-                                    }
+                                    // Facing-direction tracking, cooldown gating and the dash
+                                    // displacement all live in TryApplyDash (Dash.h) — one
+                                    // implementation shared by production and smoke tests.
+                                    Vector2 preDashPos = slot.player.position;
+                                    bool dashed = TryApplyDash(slot.player, Vector2{ input.moveX, input.moveY },
+                                                               input.dashPressed, courtBounds);
 
-                                    if (input.dashPressed && slot.player.dashCooldownTimer <= 0.0f) {
-                                        Vector2 dashDir = ResolveDashDirection(Vector2{ input.moveX, input.moveY }, slot.player.facingDirection);
-                                        slot.player.position = ComputeDashDestination(slot.player.position, dashDir, courtBounds);
-                                        slot.player.dashCooldownTimer = kDashCooldown;
+                                    // Swept dash catch: the dash displaces kDashDistance(150) in
+                                    // one step — 7.5x the kCatchRadius(20) catch diameter — and it
+                                    // is applied here on packet receipt, not through the tick loop.
+                                    // SimulateSessionTick's catch check only ever point-samples the
+                                    // POST-dash position, so a dash straight through an in-flight
+                                    // potato would otherwise tunnel past it uncaught. Sweep the
+                                    // pre->post segment against the potato's current position and
+                                    // resolve the catch here, identically to the tick loop's path.
+                                    if (dashed) {
+                                        auto potatoIt = sessionPotato.find(loc.sessionName);
+                                        if (potatoIt != sessionPotato.end()) {
+                                            HotPotato& potato = potatoIt->second;
+                                            // Thrower grace: same rule as the tick loop — the thrower
+                                            // can't re-catch while the potato hasn't yet cleared
+                                            // kCatchRadius of them post-release.
+                                            bool graced = potato.justThrown &&
+                                                          potato.lastThrowerSlot == loc.slotIndex &&
+                                                          DistanceBetween2(potato.position, preDashPos) <= kCatchRadius;
+                                            if (potato.inFlight && !graced &&
+                                                DashSegmentCatchesPotato(preDashPos, slot.player.position, potato.position)) {
+                                                ResolveCatch(potato, loc.slotIndex, slot.player.position);
+                                            }
+                                        }
                                     }
                                 }
                                 pendingAttack[loc.sessionName][loc.slotIndex] = input.attackPressed;
