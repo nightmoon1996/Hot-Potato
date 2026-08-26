@@ -59,6 +59,17 @@ int main(int argc, char** argv)
             debugMenu.Toggle();
         }
 
+        // Constructed here (before input gathering) so the aim computation below can use
+        // GetScreenToWorld2D with the same camera that BeginMode2D uses later this frame.
+        // It only depends on effects.GetShakeOffsetX/Y(), which were computed from last
+        // frame's snapshot — using last frame's shake value for this frame's aim is a
+        // harmless, imperceptible one-frame lag.
+        Camera2D camera{};
+        camera.offset = Vector2{ (float)screenWidth / 2.0f + effects.GetShakeOffsetX(), (float)screenHeight / 2.0f + effects.GetShakeOffsetY() };
+        camera.target = Vector2{ (float)screenWidth / 2.0f, (float)screenHeight / 2.0f };
+        camera.rotation = 0.0f;
+        camera.zoom = 1.0f;
+
         Vector2 move{0, 0};
         if (IsKeyDown(KEY_W)) move.y -= 1;
         if (IsKeyDown(KEY_S)) move.y += 1;
@@ -67,7 +78,31 @@ int main(int argc, char** argv)
         bool interactHeld = IsKeyDown(KEY_E);
         bool attackPressed = IsKeyPressed(KEY_Q);
 
-        netClient.SendInput(move.x, move.y, interactHeld, attackPressed);
+        bool chargingThrow = IsMouseButtonDown(MOUSE_BUTTON_LEFT);
+        bool releaseThrow = IsMouseButtonReleased(MOUSE_BUTTON_LEFT);
+
+        // Aim direction: from my own player's last-known snapshot position toward the
+        // cursor, in world space. The camera can have a non-zero offset (from shake), so
+        // the mouse's screen-space position must be unprojected into world space via
+        // GetScreenToWorld2D rather than compared directly against world-space player
+        // position.
+        float aimDirX = 1.0f, aimDirY = 0.0f;
+        {
+            const SnapshotMsg& latestSnap = netClient.GetLatestSnapshot();
+            if (mySlot < kMaxPlayersPerSession) {
+                Vector2 myPos{ latestSnap.players[mySlot].posX, latestSnap.players[mySlot].posY };
+                Vector2 mouseScreen = GetMousePosition();
+                Vector2 mouseWorld = GetScreenToWorld2D(mouseScreen, camera);
+                Vector2 toMouse{ mouseWorld.x - myPos.x, mouseWorld.y - myPos.y };
+                float len = std::sqrt(toMouse.x * toMouse.x + toMouse.y * toMouse.y);
+                if (len > 0.0001f) {
+                    aimDirX = toMouse.x / len;
+                    aimDirY = toMouse.y / len;
+                }
+            }
+        }
+
+        netClient.SendInput(move.x, move.y, interactHeld, attackPressed, chargingThrow, releaseThrow, aimDirX, aimDirY);
         netClient.PollNetwork(now);
 
         const SnapshotMsg& snap = netClient.GetLatestSnapshot();
@@ -77,12 +112,6 @@ int main(int argc, char** argv)
 
         BeginDrawing();
         ClearBackground(RAYWHITE);
-
-        Camera2D camera{};
-        camera.offset = Vector2{ (float)screenWidth / 2.0f + effects.GetShakeOffsetX(), (float)screenHeight / 2.0f + effects.GetShakeOffsetY() };
-        camera.target = Vector2{ (float)screenWidth / 2.0f, (float)screenHeight / 2.0f };
-        camera.rotation = 0.0f;
-        camera.zoom = 1.0f;
 
         BeginMode2D(camera);
 
