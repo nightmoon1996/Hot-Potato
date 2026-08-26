@@ -1,7 +1,7 @@
 #pragma once
 
 #include <raylib-cpp.hpp>
-#include "Player.h"
+#include "server/Player.h"
 
 struct DebugButton {
     Rectangle bounds;

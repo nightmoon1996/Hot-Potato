@@ -1,9 +1,10 @@
 #include <cassert>
 #include <raylib-cpp.hpp>
-#include "Item.h"
-#include "Player.h"
-#include "Hazard.h"
-#include "Combat.h"
+#include "server/Item.h"
+#include "server/Player.h"
+#include "server/Hazard.h"
+#include "server/Combat.h"
+#include "server/DebugActions.h"
 #include "DebugMenu.h"
 #include "shared/Protocol.h"
 #include "shared/Serialize.h"

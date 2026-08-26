@@ -3,7 +3,7 @@
 #include <string>
 #include <cstdint>
 #include <raylib-cpp.hpp>
-#include "../Player.h"
+#include "Player.h"
 
 static constexpr Vector2 kSlot0Spawn{ 150.0f, 300.0f };
 static constexpr Vector2 kSlot1Spawn{ 850.0f, 300.0f };
