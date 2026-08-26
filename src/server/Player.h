@@ -29,11 +29,15 @@ public:
     float deathRespawnTimer;
     float attackCooldownTimer;
     float channelTimer;
+    float dashCooldownTimer;
+    Vector2 facingDirection; // last non-zero movement direction; used as the dash direction
+                             // when the player isn't currently pressing a movement key
     Inventory inventory;
 
     explicit Player(Vector2 spawn)
         : position(spawn), spawnPoint(spawn), hp(kMaxHp), state(PlayerState::Alive),
-          downedTimer(0.0f), deathRespawnTimer(0.0f), attackCooldownTimer(0.0f), channelTimer(0.0f) {}
+          downedTimer(0.0f), deathRespawnTimer(0.0f), attackCooldownTimer(0.0f), channelTimer(0.0f),
+          dashCooldownTimer(0.0f), facingDirection(Vector2{1.0f, 0.0f}) {}
 
     void TakeDamage(int amount) {
         if (state != PlayerState::Alive) {
