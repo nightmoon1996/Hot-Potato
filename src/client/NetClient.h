@@ -15,7 +15,7 @@ public:
     bool JoinRoom(const std::string& serverIp, uint16_t serverPort, const std::string& roomCode);
     bool Reconnect();
     void SendInput(float moveX, float moveY, bool interactHeld, bool attackPressed,
-                   bool chargingThrow, bool releaseThrow, float aimDirX, float aimDirY);
+                   bool chargingThrow, bool releaseThrow, float aimDirX, float aimDirY, bool dashPressed);
     void SendDebugAction(DebugAction action, uint8_t targetSlot);
     void PollNetwork(double nowSeconds);
 

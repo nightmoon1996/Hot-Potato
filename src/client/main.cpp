@@ -84,6 +84,8 @@ int main(int argc, char** argv)
         bool chargingThrow = IsMouseButtonDown(MOUSE_BUTTON_LEFT);
         bool releaseThrow = IsMouseButtonReleased(MOUSE_BUTTON_LEFT);
 
+        bool dashPressed = IsKeyPressed(KEY_LEFT_SHIFT) || IsKeyPressed(KEY_RIGHT_SHIFT);
+
         // Aim direction: from my own player's last-known snapshot position toward the
         // cursor, in world space. The camera can have a non-zero offset (from shake), so
         // the mouse's screen-space position must be unprojected into world space via
@@ -102,7 +104,7 @@ int main(int argc, char** argv)
             }
         }
 
-        netClient.SendInput(move.x, move.y, interactHeld, attackPressed, chargingThrow, releaseThrow, aimDirX, aimDirY);
+        netClient.SendInput(move.x, move.y, interactHeld, attackPressed, chargingThrow, releaseThrow, aimDirX, aimDirY, dashPressed);
         netClient.PollNetwork(now);
 
         const SnapshotMsg& snap = netClient.GetLatestSnapshot();
