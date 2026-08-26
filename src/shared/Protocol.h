@@ -15,7 +15,8 @@ enum class MessageType : uint8_t {
 
 enum class RejectReason : uint8_t {
     SessionFull,
-    InvalidToken
+    InvalidToken,
+    RoomNotFound
 };
 
 enum class DebugAction : uint8_t {
@@ -51,6 +52,7 @@ struct WelcomeMsg {
     float channelDuration;
     float hazardDamagePerSecond;
     int inventoryCapacity;
+    char roomCode[7]; // 6 digits + null terminator
 };
 
 struct RejectedMsg {
