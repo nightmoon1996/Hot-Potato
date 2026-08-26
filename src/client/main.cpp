@@ -6,6 +6,7 @@
 #include "Juice.h"
 #include "JuiceTests.h"
 #include "RoomMenuTests.h"
+#include "RoomMenu.h"
 
 int main(int argc, char** argv)
 {
@@ -17,19 +18,28 @@ int main(int argc, char** argv)
         }
     }
 
-    std::string sessionName = (argc > 1) ? argv[1] : "default";
-
-    NetClient netClient;
-    if (!netClient.Connect("127.0.0.1", 7777, sessionName)) {
-        TraceLog(LOG_ERROR, "Failed to connect to server");
-        return 1;
-    }
-    TraceLog(LOG_INFO, "Connected as player slot %d", (int)netClient.GetPlayerSlot());
-
     int screenWidth = 1000;
     int screenHeight = 600;
     raylib::Window w(screenWidth, screenHeight, "Maxion Test - Client");
     SetTargetFPS(60);
+
+    NetClient netClient;
+    RoomMenu roomMenu;
+
+    while (!w.ShouldClose() && !roomMenu.IsDone()) {
+        roomMenu.HandleInput(netClient);
+
+        BeginDrawing();
+        ClearBackground(RAYWHITE);
+        roomMenu.Draw();
+        EndDrawing();
+    }
+
+    if (w.ShouldClose()) {
+        return 0;
+    }
+
+    TraceLog(LOG_INFO, "Connected as player slot %d", (int)netClient.GetPlayerSlot());
 
     DebugMenu debugMenu;
     ClientEffectsState effects;
@@ -145,8 +155,9 @@ int main(int argc, char** argv)
 
         EndMode2D();
 
-        DrawText(TextFormat("You are slot %d. WASD move, E pickup/revive, Q attack.", (int)mySlot), 10, 10, 16, BLACK);
-        DrawText("F1: Debug Menu", 10, 30, 16, DARKGRAY);
+        DrawText(TextFormat("Room: %s | Connected", netClient.GetRoomCode()), 10, 10, 16, BLACK);
+        DrawText(TextFormat("You are slot %d. WASD move, E pickup/revive, Q attack.", (int)mySlot), 10, 30, 16, BLACK);
+        DrawText("F1: Debug Menu", 10, 50, 16, DARKGRAY);
 
         debugMenu.DrawAndHandle(netClient);
 
