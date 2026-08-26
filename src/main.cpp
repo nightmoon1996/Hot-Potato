@@ -5,6 +5,8 @@
 #include "Hazard.h"
 #include "Combat.h"
 #include "DebugMenu.h"
+#include "shared/Protocol.h"
+#include "shared/Serialize.h"
 
 void SmokeTestItems() {
     Inventory inv;
@@ -155,8 +157,54 @@ void SmokeTestCombatAndRevive() {
     assert(reviver2.channelTimer == 0.0f);
 }
 
+void SmokeTestSerialization() {
+    InputMsg input{ 1.0f, -1.0f, true, false };
+    std::vector<uint8_t> buffer;
+    SerializeStruct(input, buffer);
+    assert(buffer.size() == sizeof(InputMsg));
+
+    InputMsg roundTripped{};
+    bool ok = DeserializeStruct(buffer.data(), buffer.size(), roundTripped);
+    assert(ok == true);
+    assert(roundTripped.moveX == 1.0f);
+    assert(roundTripped.moveY == -1.0f);
+    assert(roundTripped.interactHeld == true);
+    assert(roundTripped.attackPressed == false);
+
+    // Too-short buffer fails
+    InputMsg failed{};
+    bool notOk = DeserializeStruct(buffer.data(), 2, failed);
+    assert(notOk == false);
+
+    // SnapshotMsg round trip (larger, nested struct)
+    SnapshotMsg snap{};
+    snap.players[0] = PlayerSnapshot{ 10.0f, 20.0f, 100, 0, 2, 0.5f };
+    snap.players[1] = PlayerSnapshot{ 30.0f, 40.0f, 0, 1, 0, 0.0f };
+    snap.items[0] = WorldItemSnapshot{ 5.0f, 5.0f, true };
+    snap.items[1] = WorldItemSnapshot{ 6.0f, 6.0f, false };
+    snap.hazardX = 100.0f;
+    snap.hazardY = 200.0f;
+    snap.hazardW = 50.0f;
+    snap.hazardH = 60.0f;
+
+    std::vector<uint8_t> snapBuffer;
+    SerializeStruct(snap, snapBuffer);
+    SnapshotMsg snapRoundTripped{};
+    bool snapOk = DeserializeStruct(snapBuffer.data(), snapBuffer.size(), snapRoundTripped);
+    assert(snapOk == true);
+    assert(snapRoundTripped.players[0].posX == 10.0f);
+    assert(snapRoundTripped.players[0].hp == 100);
+    assert(snapRoundTripped.players[1].state == 1);
+    assert(snapRoundTripped.items[0].active == true);
+    assert(snapRoundTripped.items[1].active == false);
+    assert(snapRoundTripped.hazardW == 50.0f);
+}
+
 int main()
 {
+    SmokeTestSerialization();
+    TraceLog(LOG_INFO, "SmokeTestSerialization passed");
+
     SmokeTestItems();
     TraceLog(LOG_INFO, "SmokeTestItems passed");
 
