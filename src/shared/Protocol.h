@@ -6,6 +6,9 @@
 // so array sizes and loop bounds on both sides stay in lockstep.
 static constexpr int kMaxPlayersPerSession = 4;
 
+// Number of rounds in a normal match before tiebreak resolution kicks in (Phase 3).
+constexpr int kRoundsPerMatch = 3;
+
 enum class MessageType : uint8_t {
     ConnectRequest,
     Welcome,
@@ -107,6 +110,14 @@ struct PotatoSnapshot {
     float explodeTimer;
 };
 
+struct MatchSnapshot {
+    int roundNumber;
+    int roundScore[kMaxPlayersPerSession];
+    bool matchOver;
+    int winnerSlot; // -1 if undecided
+    bool inTiebreak;
+};
+
 struct SnapshotMsg {
     PlayerSnapshot players[kMaxPlayersPerSession];
     // Intentionally 2, not kMaxPlayersPerSession: the world-item count is unrelated to
@@ -117,4 +128,5 @@ struct SnapshotMsg {
     float hazardW;
     float hazardH;
     PotatoSnapshot potato;
+    MatchSnapshot match;
 };
