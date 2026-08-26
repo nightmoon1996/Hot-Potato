@@ -439,10 +439,13 @@ int main(int argc, char** argv) {
         double now = NowSeconds();
 
         // --- Receive and dispatch incoming packets ---
+        // Drain every packet waiting in the OS socket buffer each pass, not just one:
+        // with the 1ms sleep below, a single-packet-per-pass loop falls behind under
+        // the input rate of two connected clients, growing input lag over time.
         std::string fromIp;
         uint16_t fromPort;
-        int received = socket.ReceiveFrom(recvBuffer, sizeof(recvBuffer), fromIp, fromPort);
-        if (received > (int)sizeof(PacketHeader)) {
+        int received;
+        while ((received = socket.ReceiveFrom(recvBuffer, sizeof(recvBuffer), fromIp, fromPort)) > (int)sizeof(PacketHeader)) {
             PacketHeader header{};
             DeserializeStruct(recvBuffer, received, header);
             const uint8_t* payload = recvBuffer + sizeof(PacketHeader);
@@ -507,8 +510,10 @@ int main(int argc, char** argv) {
                         if (header.channel == 0 && type == MessageType::Input) {
                             InputMsg input{};
                             if (DeserializeStruct(body, bodyLen, input)) {
-                                slot.player.position.x += input.moveX * kMoveSpeed * (float)tickInterval;
-                                slot.player.position.y += input.moveY * kMoveSpeed * (float)tickInterval;
+                                if (slot.player.state == PlayerState::Alive) {
+                                    slot.player.position.x += input.moveX * kMoveSpeed * (float)tickInterval;
+                                    slot.player.position.y += input.moveY * kMoveSpeed * (float)tickInterval;
+                                }
                                 pendingAttack[loc.sessionName][loc.slotIndex] = input.attackPressed;
                                 pendingInteract[loc.sessionName][loc.slotIndex] = input.interactHeld;
                             }
