@@ -31,7 +31,12 @@ enum class DebugAction : uint8_t {
     Revive,
     HealFull,
     GivePotion,
-    ForceDown
+    ForceDown,
+    // Session-scoped, NOT per-player: resets the session's MatchState and respawns the
+    // potato for a fresh round. `targetSlot` is ignored. Handled at the server's
+    // DebugActionRequest dispatch site in main.cpp, deliberately NOT inside
+    // ApplyDebugAction (which has a per-player contract and no session access).
+    NewMatch
 };
 
 struct PacketHeader {

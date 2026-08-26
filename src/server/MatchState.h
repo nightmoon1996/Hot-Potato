@@ -53,6 +53,13 @@ inline void AdvanceRoundOrEndMatch(MatchState& match, const bool* active) {
         if (maxCount == 1) {
             match.matchOver = true;
             match.winnerSlot = maxSlot;
+        } else if (maxCount == 0) {
+            // All tiebreak-eligible players vanished (e.g. every one of them disconnected)
+            // while some other non-eligible active player kept triggering scored round-ends.
+            // Nobody is left to determine a winner among, so end the match rather than
+            // wedging inTiebreak forever with no resolution path.
+            match.matchOver = true;
+            // winnerSlot stays -1 (its default) -- the client already renders this as "no winner."
         } else {
             // Still tied among 2+: narrow eligibility to just the tied slots and continue.
             for (int i = 0; i < kMaxPlayersPerSession; i++) {

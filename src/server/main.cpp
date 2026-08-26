@@ -26,6 +26,7 @@ static void SimulateSessionTick(Session& session, std::vector<WorldItem>& items,
                                 float* hazardCarry, bool* attack, bool* interact, float dt,
                                 bool* activeOut, HotPotato& potato, float* chargeTimer,
                                 InputMsg* latestInputs, Rectangle courtBounds, MatchState& match);
+static void StartNewMatch(Session& session, MatchState& match, HotPotato& potato, float* chargeTimer);
 
 void SmokeTestItems() {
     Inventory inv;
@@ -887,6 +888,24 @@ void SmokeTestMatchState() {
         assert(match.roundScore[2] == 0); // confirmed untouched by the tiebreak round
     }
 
+    // Tiebreak wedge hardening: if every tiebreak-eligible slot goes inactive while a
+    // non-eligible active player keeps triggering scored round-ends, the tiebreak must
+    // END (no winner) rather than looping in inTiebreak forever with no resolution path.
+    {
+        MatchState match{};
+        match.inTiebreak = true;
+        match.tiebreakEligible[0] = true;
+        match.tiebreakEligible[1] = true;
+        match.roundScore[0] = 3;
+        match.roundScore[1] = 3;
+        // Slots 0 and 1 (the only eligible ones) disconnect; only slot 2 remains active.
+        bool active[kMaxPlayersPerSession] = { false, false, true, false };
+        ScoreRoundEnd(match, active, -1);
+        AdvanceRoundOrEndMatch(match, active);
+        assert(match.matchOver == true);
+        assert(match.winnerSlot == -1); // no winner determinable
+    }
+
     // No active players: does not crash, match simply doesn't resolve
     {
         MatchState match{};
@@ -896,6 +915,128 @@ void SmokeTestMatchState() {
             AdvanceRoundOrEndMatch(match, active);
         }
         assert(match.matchOver == false);
+    }
+}
+
+void SmokeTestMatchOverFreezeAndNewMatch() {
+    const float dt = 1.0f / 60.0f;
+
+    // --- matchOver freezes ALL potato simulation, except holder position tracking ---
+    {
+        Session session;
+        session.slots[0].state = SlotState::Connected;
+        session.slots[1].state = SlotState::Connected;
+        session.slots[0].player = Player(Vector2{0.0f, 0.0f});
+        session.slots[1].player = Player(Vector2{100.0f, 0.0f});
+
+        HazardZone hazard{ Rectangle{ 5000.0f, 5000.0f, 10.0f, 10.0f } };
+        std::vector<WorldItem> items;
+        float hazardCarry[kMaxPlayersPerSession] = {};
+        bool attack[kMaxPlayersPerSession] = {};
+        bool interact[kMaxPlayersPerSession] = {};
+        Rectangle courtBounds{ 0.0f, 0.0f, 1000.0f, 600.0f };
+
+        HotPotato potato{};
+        potato.held = true;
+        potato.holderSlot = 0;
+        potato.position = session.slots[0].player.position;
+        potato.explodeTimer = 0.01f; // would explode within one tick if the guard didn't hold
+        potato.catchCount = 3;
+        float chargeTimer[kMaxPlayersPerSession] = {};
+        InputMsg latestInputs[kMaxPlayersPerSession] = {};
+
+        // Full-throttle inputs: if any of the frozen logic ran, charge would accumulate
+        // and the potato would be thrown.
+        latestInputs[0].chargingThrow = true;
+        latestInputs[0].releaseThrow = true;
+        latestInputs[0].aimDirX = 1.0f;
+
+        MatchState match{};
+        match.matchOver = true;
+        match.winnerSlot = 1;
+
+        for (int i = 0; i < 30; i++) {
+            bool active[kMaxPlayersPerSession];
+            SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
+                                 potato, chargeTimer, latestInputs, courtBounds, match);
+        }
+
+        // No charging, no throw, no catch, no explosion, no round advance.
+        assert(chargeTimer[0] == 0.0f);
+        assert(potato.held == true);
+        assert(potato.inFlight == false);
+        assert(potato.holderSlot == 0);
+        assert(potato.catchCount == 3);
+        assert(potato.explodeTimer == 0.01f); // timer never ticked down
+        assert(session.slots[0].player.state == PlayerState::Alive); // never exploded/downed
+        assert(match.roundNumber == 1);
+        assert(match.roundScore[0] == 0 && match.roundScore[1] == 0);
+        assert(match.winnerSlot == 1);
+
+        // ...but the position sync-to-holder block lives OUTSIDE the matchOver guard, so
+        // moving the holder must still drag the potato along.
+        session.slots[0].player.position = Vector2{42.0f, 17.0f};
+        {
+            bool active[kMaxPlayersPerSession];
+            SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
+                                 potato, chargeTimer, latestInputs, courtBounds, match);
+        }
+        assert(potato.position.x == 42.0f && potato.position.y == 17.0f);
+        assert(potato.held == true && potato.holderSlot == 0); // still frozen otherwise
+
+        // --- New Match reset actually un-wedges the session ---
+        StartNewMatch(session, match, potato, chargeTimer);
+
+        assert(match.matchOver == false);
+        assert(match.roundNumber == 1);
+        assert(match.winnerSlot == -1);
+        assert(match.inTiebreak == false);
+        assert(match.roundScore[0] == 0 && match.roundScore[1] == 0);
+        // Potato freshly held by the first Alive active player, timers reset.
+        assert(potato.held == true);
+        assert(potato.holderSlot == 0);
+        assert(session.slots[0].player.state == PlayerState::Alive);
+        assert(potato.inFlight == false);
+        assert(potato.catchCount == 0);
+        assert(potato.explodeTimer == ComputeExplodeTimerForCatch(0));
+        assert(chargeTimer[0] == 0.0f);
+
+        // And simulation is genuinely live again: the explode timer ticks down.
+        latestInputs[0].chargingThrow = false;
+        latestInputs[0].releaseThrow = false;
+        float before = potato.explodeTimer;
+        {
+            bool active[kMaxPlayersPerSession];
+            SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
+                                 potato, chargeTimer, latestInputs, courtBounds, match);
+        }
+        assert(potato.explodeTimer < before);
+    }
+
+    // --- New Match skips non-Alive players when handing out the potato ---
+    {
+        Session session;
+        session.slots[0].state = SlotState::Connected;
+        session.slots[1].state = SlotState::Connected;
+        session.slots[0].player = Player(Vector2{0.0f, 0.0f});
+        session.slots[1].player = Player(Vector2{100.0f, 0.0f});
+        session.slots[0].player.ForceDown();
+
+        HotPotato potato{};
+        float chargeTimer[kMaxPlayersPerSession] = { 1.0f, 2.0f, 3.0f, 4.0f };
+        MatchState match{};
+        match.matchOver = true;
+        match.roundNumber = 4;
+        match.roundScore[1] = 2;
+
+        StartNewMatch(session, match, potato, chargeTimer);
+
+        assert(match.matchOver == false);
+        assert(match.roundNumber == 1);
+        assert(match.roundScore[1] == 0);
+        assert(potato.held == true);
+        assert(potato.holderSlot == 1); // slot 0 is Downed, so slot 1 gets it
+        for (int i = 0; i < kMaxPlayersPerSession; i++) assert(chargeTimer[i] == 0.0f);
     }
 }
 
@@ -929,6 +1070,9 @@ void RunAllSmokeTests() {
 
     SmokeTestMatchState();
     std::printf("SmokeTestMatchState passed\n");
+
+    SmokeTestMatchOverFreezeAndNewMatch();
+    std::printf("SmokeTestMatchOverFreezeAndNewMatch passed\n");
 
     std::printf("All smoke tests passed\n");
 }
@@ -1015,6 +1159,19 @@ static void ResetPotatoForNewRound(HotPotato& potato, Session& session, const bo
     }
 }
 
+// Starts a brand-new match for a session: clears all scores/round state (so matchOver
+// goes back to false) and respawns the potato exactly like a normal round reset.
+// Triggered out-of-band by the debug menu's "New Match" button (DebugAction::NewMatch);
+// session-scoped, so it deliberately lives here rather than in ApplyDebugAction.
+static void StartNewMatch(Session& session, MatchState& match, HotPotato& potato, float* chargeTimer) {
+    match = MatchState{};
+    bool active[kMaxPlayersPerSession];
+    for (int i = 0; i < kMaxPlayersPerSession; i++) {
+        active[i] = session.slots[i].state == SlotState::Connected;
+    }
+    ResetPotatoForNewRound(potato, session, active, chargeTimer);
+}
+
 // Pure gameplay-state mutation for one session's tick: pickup, hot potato, revive
 // and timers. Deliberately free of socket/serialization concerns so it can be unit
 // tested directly (see SmokeTestSimulationTick). `active` is filled in for the caller,
@@ -1064,9 +1221,9 @@ static void SimulateSessionTick(Session& session, std::vector<WorldItem>& items,
     if (match.matchOver) {
         // Match decided: freeze the potato in whatever state it's in (typically unheld,
         // since the winning round-end already reset it) — no further charge/throw/catch/
-        // explosion simulation runs. A new match starts only via an explicit reset (Task 4
-        // adds a debug/UI trigger for this in a later step; for this task, matches simply
-        // end and stay ended).
+        // explosion simulation runs. A new match starts via the debug menu's "New Match"
+        // action (see DebugAction::NewMatch), which resets this session's MatchState and
+        // respawns the potato via StartNewMatch.
     } else {
     // Charge tracking: accumulate while held, cap at kMaxChargeDuration, reset on release.
     for (int i = 0; i < kMaxPlayersPerSession; i++) {
@@ -1363,7 +1520,13 @@ int main(int argc, char** argv) {
                                 for (auto& msg : ready) {
                                     DebugActionRequestMsg deliveredReq{};
                                     if (DeserializeStruct(msg.second.data(), msg.second.size(), deliveredReq)) {
-                                        if (deliveredReq.targetSlot < kMaxPlayersPerSession) {
+                                        if (deliveredReq.action == DebugAction::NewMatch) {
+                                            // Session-scoped action: resets this room's MatchState and
+                                            // respawns the potato. targetSlot is ignored by design.
+                                            StartNewMatch(*session, sessionMatch[loc.sessionName],
+                                                          sessionPotato[loc.sessionName],
+                                                          sessionChargeTimer[loc.sessionName]);
+                                        } else if (deliveredReq.targetSlot < kMaxPlayersPerSession) {
                                             ApplyDebugAction(session->slots[deliveredReq.targetSlot].player, deliveredReq.action);
                                         }
                                     }
