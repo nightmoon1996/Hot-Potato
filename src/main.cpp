@@ -7,6 +7,7 @@
 #include "DebugMenu.h"
 #include "shared/Protocol.h"
 #include "shared/Serialize.h"
+#include "shared/ReliableChannel.h"
 
 void SmokeTestItems() {
     Inventory inv;
@@ -157,6 +158,63 @@ void SmokeTestCombatAndRevive() {
     assert(reviver2.channelTimer == 0.0f);
 }
 
+void SmokeTestReliableChannel() {
+    // Sender: track, ack, retransmit
+    ReliableSender sender;
+    uint32_t seq1 = sender.NextSeq();
+    uint32_t seq2 = sender.NextSeq();
+    assert(seq1 == 1);
+    assert(seq2 == 2);
+
+    std::vector<uint8_t> payload1{ 0xAA };
+    std::vector<uint8_t> payload2{ 0xBB };
+    sender.TrackUnacked(seq1, payload1, 0.0);
+    sender.TrackUnacked(seq2, payload2, 0.0);
+
+    // Not enough time has passed: no retransmits yet
+    auto toRetransmit1 = sender.GetMessagesToRetransmit(0.05, 0.1);
+    assert(toRetransmit1.size() == 0);
+
+    // 0.1s later: both should be flagged for retransmit
+    auto toRetransmit2 = sender.GetMessagesToRetransmit(0.1, 0.1);
+    assert(toRetransmit2.size() == 2);
+
+    // Ack seq1: it should no longer be retransmitted
+    sender.OnAckReceived(seq1);
+    auto toRetransmit3 = sender.GetMessagesToRetransmit(0.3, 0.1);
+    assert(toRetransmit3.size() == 1);
+    assert(toRetransmit3[0].first == seq2);
+
+    // Receiver: in-order delivery
+    ReliableReceiver receiver;
+    std::vector<std::pair<uint32_t, std::vector<uint8_t>>> ready;
+
+    bool delivered1 = receiver.TryDeliverInOrder(1, payload1, ready);
+    assert(delivered1 == true);
+    assert(ready.size() == 1);
+    assert(ready[0].first == 1);
+
+    // Out-of-order arrival (seq 3 before seq 2): buffered, nothing new ready
+    ready.clear();
+    bool delivered2 = receiver.TryDeliverInOrder(3, payload1, ready);
+    assert(delivered2 == false);
+    assert(ready.size() == 0);
+
+    // Now seq 2 arrives: both 2 and 3 become ready, in order
+    ready.clear();
+    bool delivered3 = receiver.TryDeliverInOrder(2, payload2, ready);
+    assert(delivered3 == true);
+    assert(ready.size() == 2);
+    assert(ready[0].first == 2);
+    assert(ready[1].first == 3);
+
+    // Duplicate of already-delivered seq 1: not re-delivered
+    ready.clear();
+    bool delivered4 = receiver.TryDeliverInOrder(1, payload1, ready);
+    assert(delivered4 == false);
+    assert(ready.size() == 0);
+}
+
 void SmokeTestSerialization() {
     InputMsg input{ 1.0f, -1.0f, true, false };
     std::vector<uint8_t> buffer;
@@ -204,6 +262,9 @@ int main()
 {
     SmokeTestSerialization();
     TraceLog(LOG_INFO, "SmokeTestSerialization passed");
+
+    SmokeTestReliableChannel();
+    TraceLog(LOG_INFO, "SmokeTestReliableChannel passed");
 
     SmokeTestItems();
     TraceLog(LOG_INFO, "SmokeTestItems passed");
