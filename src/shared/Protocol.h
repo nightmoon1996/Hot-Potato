@@ -77,6 +77,10 @@ struct InputMsg {
     float moveY;
     bool interactHeld;
     bool attackPressed;
+    bool chargingThrow;
+    bool releaseThrow;
+    float aimDirX;
+    float aimDirY;
 };
 
 struct PlayerSnapshot {
@@ -94,6 +98,15 @@ struct WorldItemSnapshot {
     bool active;
 };
 
+struct PotatoSnapshot {
+    float posX;
+    float posY;
+    bool held;
+    bool inFlight;
+    int holderSlot; // -1 if unheld/mid-flight
+    float explodeTimer;
+};
+
 struct SnapshotMsg {
     PlayerSnapshot players[kMaxPlayersPerSession];
     // Intentionally 2, not kMaxPlayersPerSession: the world-item count is unrelated to
@@ -103,4 +116,5 @@ struct SnapshotMsg {
     float hazardY;
     float hazardW;
     float hazardH;
+    PotatoSnapshot potato;
 };
