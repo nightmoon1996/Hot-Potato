@@ -171,6 +171,21 @@ int main(int argc, char** argv)
             drawPlayer(i, snap.players[i], kPlayerColors[i], kPlayerLabels[i]);
         }
 
+        // Draw the potato itself (a simple colored circle; no arc/height rendering this phase).
+        {
+            const PotatoSnapshot& potato = snap.potato;
+            Color potatoColor = BROWN;
+            DrawCircleV(Vector2{ potato.posX, potato.posY }, 10.0f, potatoColor);
+
+            // Explosion countdown, shown above whoever's currently holding it.
+            if (potato.held && potato.holderSlot >= 0 && potato.holderSlot < kMaxPlayersPerSession) {
+                const PlayerSnapshot& holderSnap = snap.players[potato.holderSlot];
+                Vector2 textPos{ holderSnap.posX, holderSnap.posY - 50.0f };
+                Color timerColor = potato.explodeTimer <= 2.0f ? RED : BLACK; // urgency cue in the final 2 seconds
+                DrawText(TextFormat("%.1f", potato.explodeTimer), (int)textPos.x - 12, (int)textPos.y, 16, timerColor);
+            }
+        }
+
         for (int i = 0; i < effects.GetParticleCount(); i++) {
             const Particle& particle = effects.GetParticles()[i];
             if (!particle.active) continue;
