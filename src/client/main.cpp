@@ -75,12 +75,17 @@ int main(int argc, char** argv)
             }
         }
 
-        auto drawPlayer = [&](const PlayerSnapshot& p, Color color, const char* label) {
+        auto drawPlayer = [&](int slot, const PlayerSnapshot& p, Color color, const char* label) {
             if (p.state == 3) return; // absent: slot not occupied by a connected player
 
             Color drawColor = color;
             if (p.state == 1) drawColor = GRAY;   // Downed
             if (p.state == 2) drawColor = Fade(GRAY, 0.3f); // Dead
+
+            float flashRatio = effects.GetHitFlashRatio(slot);
+            if (flashRatio > 0.0f) {
+                drawColor = ColorLerp(drawColor, WHITE, flashRatio);
+            }
 
             Vector2 pos{ p.posX, p.posY };
             DrawCircleV(pos, 16, drawColor);
@@ -88,7 +93,9 @@ int main(int argc, char** argv)
 
             int barWidth = 40;
             DrawRectangle((int)pos.x - barWidth / 2, (int)pos.y - 26, barWidth, 5, DARKGRAY);
-            int hpWidth = (int)(barWidth * ((float)p.hp / constants.maxHp));
+            float displayedHp = effects.GetDisplayedHp(slot);
+            int hpWidth = (int)(barWidth * (displayedHp / constants.maxHp));
+            if (hpWidth < 0) hpWidth = 0;
             DrawRectangle((int)pos.x - barWidth / 2, (int)pos.y - 26, hpWidth, 5, GREEN);
 
             DrawText(TextFormat("Potions: %d", p.potionCount), (int)pos.x - 30, (int)pos.y + 20, 12, DARKBLUE);
@@ -99,8 +106,8 @@ int main(int argc, char** argv)
             }
         };
 
-        drawPlayer(snap.players[0], BLUE, "P1");
-        drawPlayer(snap.players[1], MAROON, "P2");
+        drawPlayer(0, snap.players[0], BLUE, "P1");
+        drawPlayer(1, snap.players[1], MAROON, "P2");
 
         EndMode2D();
 
