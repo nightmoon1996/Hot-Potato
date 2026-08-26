@@ -396,7 +396,7 @@ static ClientLocation FindClientByAddress(SessionManager& manager, const std::ve
     for (const auto& name : sessionNames) {
         Session* session = manager.GetSession(name);
         if (!session) continue;
-        for (int i = 0; i < 2; i++) {
+        for (int i = 0; i < 4; i++) {
             if (session->slots[i].clientIp == ip && session->slots[i].clientPort == port &&
                 session->slots[i].state == SlotState::Connected) {
                 return { true, name, i };
@@ -462,10 +462,10 @@ int main(int argc, char** argv) {
     // Track world items and unreliable-send sequence counters per session name,
     // since Session itself only holds player slots.
     std::map<std::string, std::vector<WorldItem>> sessionWorldItems;
-    std::map<std::string, float[2]> sessionHazardCarry;
+    std::map<std::string, float[4]> sessionHazardCarry;
     std::map<std::string, uint32_t> sessionSnapshotSeq;
-    std::map<std::string, bool[2]> pendingAttack;
-    std::map<std::string, bool[2]> pendingInteract;
+    std::map<std::string, bool[4]> pendingAttack;
+    std::map<std::string, bool[4]> pendingInteract;
 
     const double tickInterval = 1.0 / 60.0;
     double lastTick = NowSeconds();
@@ -518,8 +518,9 @@ int main(int argc, char** argv) {
                                     WorldItem{ Vector2{300.0f, 500.0f}, ItemType::RevivePotion, true },
                                     WorldItem{ Vector2{700.0f, 100.0f}, ItemType::RevivePotion, true },
                                 };
-                                sessionHazardCarry[outcome.roomCode][0] = 0.0f;
-                                sessionHazardCarry[outcome.roomCode][1] = 0.0f;
+                                for (int i = 0; i < 4; i++) {
+                                    sessionHazardCarry[outcome.roomCode][i] = 0.0f;
+                                }
                                 sessionSnapshotSeq[outcome.roomCode] = 1;
                             }
 
@@ -568,7 +569,7 @@ int main(int argc, char** argv) {
                                 for (auto& msg : ready) {
                                     DebugActionRequestMsg deliveredReq{};
                                     if (DeserializeStruct(msg.second.data(), msg.second.size(), deliveredReq)) {
-                                        if (deliveredReq.targetSlot < 2) {
+                                        if (deliveredReq.targetSlot < 4) {
                                             ApplyDebugAction(session->slots[deliveredReq.targetSlot].player, deliveredReq.action);
                                         }
                                     }
@@ -602,8 +603,6 @@ int main(int argc, char** argv) {
                 Session* session = sessionManager.GetSession(sessionEntry);
                 if (!session) continue;
 
-                Player& p0 = session->slots[0].player;
-                Player& p1 = session->slots[1].player;
                 std::vector<WorldItem>& items = sessionWorldItems[sessionEntry];
                 float* hazardCarry = sessionHazardCarry[sessionEntry];
                 bool* attack = pendingAttack.count(sessionEntry) ? pendingAttack[sessionEntry] : nullptr;
@@ -612,43 +611,74 @@ int main(int argc, char** argv) {
                 // Only players occupying a genuinely Connected slot are simulated.
                 // Empty and DisconnectedPending slots are frozen: no movement, pickup,
                 // attack, revive, hazard damage, or timer updates.
-                bool p0Active = session->slots[0].state == SlotState::Connected;
-                bool p1Active = session->slots[1].state == SlotState::Connected;
+                bool active[4];
+                for (int i = 0; i < 4; i++) {
+                    active[i] = session->slots[i].state == SlotState::Connected;
+                }
 
-                // An inactive opponent cannot be revive-targeted (they're not really
-                // "there" from a live-multiplayer standpoint), so an active player
-                // checking for a valid revive target must also require the opponent
-                // to be active.
-                bool p0CanRevive = p1Active && p1.state == PlayerState::Downed && DistanceBetween(p0.position, p1.position) <= kReviveRange;
-                bool p1CanRevive = p0Active && p0.state == PlayerState::Downed && DistanceBetween(p1.position, p0.position) <= kReviveRange;
-
+                // Pickup: each active, Alive player who isn't currently a valid revive
+                // channel target for anyone else may pick up an item. (A player who could
+                // instead be revived should channel-revive, not pick up items, mirroring
+                // the original 2-player behavior's "!canRevive" gate.)
                 if (interact) {
-                    if (p0Active && p0.state == PlayerState::Alive && interact[0] && !p0CanRevive) {
-                        for (auto& item : items) { if (TryPickup(item, p0.position, p0.inventory, kPickupRadius)) break; }
-                    }
-                    if (p1Active && p1.state == PlayerState::Alive && interact[1] && !p1CanRevive) {
-                        for (auto& item : items) { if (TryPickup(item, p1.position, p1.inventory, kPickupRadius)) break; }
+                    for (int i = 0; i < 4; i++) {
+                        if (!active[i] || session->slots[i].player.state != PlayerState::Alive || !interact[i]) continue;
+                        bool isRevivable = false;
+                        for (int j = 0; j < 4; j++) {
+                            if (i == j || !active[j]) continue;
+                            if (session->slots[j].player.state == PlayerState::Downed &&
+                                DistanceBetween(session->slots[i].player.position, session->slots[j].player.position) <= kReviveRange) {
+                                isRevivable = true;
+                                break;
+                            }
+                        }
+                        if (isRevivable) continue;
+                        for (auto& item : items) { if (TryPickup(item, session->slots[i].player.position, session->slots[i].player.inventory, kPickupRadius)) break; }
                     }
                 }
+
+                // Attack: each active player with attackPressed hits the nearest active
+                // opponent in range (TryAttack itself checks range/cooldown; this loop just
+                // tries each active opponent in slot order and stops at the first hit, matching
+                // the spirit of the original one-target 2-player check — with more than 2
+                // players TryAttack's own range check means only an opponent actually in range
+                // is affected, so trying all of them in order is safe and won't multi-hit
+                // since TryAttack sets a cooldown on the attacker after the first success).
                 if (attack) {
-                    if (p0Active && attack[0]) { if (p1Active) TryAttack(p0, p1); attack[0] = false; }
-                    if (p1Active && attack[1]) { if (p0Active) TryAttack(p1, p0); attack[1] = false; }
-                }
-                if (p0Active) UpdateAttackCooldown(p0, dt);
-                if (p1Active) UpdateAttackCooldown(p1, dt);
-
-                bool p0InteractHeld = interact ? interact[0] : false;
-                bool p1InteractHeld = interact ? interact[1] : false;
-                if (p0Active && p1Active) {
-                    UpdateRevive(p0, p1, p0InteractHeld, dt, kReviveRange);
-                    UpdateRevive(p1, p0, p1InteractHeld, dt, kReviveRange);
+                    for (int i = 0; i < 4; i++) {
+                        if (!active[i] || !attack[i]) continue;
+                        for (int j = 0; j < 4; j++) {
+                            if (i == j || !active[j]) continue;
+                            if (TryAttack(session->slots[i].player, session->slots[j].player)) break;
+                        }
+                        attack[i] = false;
+                    }
                 }
 
-                if (p0Active) ApplyHazardDamage(hazard, p0, dt, hazardCarry[0]);
-                if (p1Active) ApplyHazardDamage(hazard, p1, dt, hazardCarry[1]);
+                for (int i = 0; i < 4; i++) {
+                    if (active[i]) UpdateAttackCooldown(session->slots[i].player, dt);
+                }
 
-                if (p0Active) p0.UpdateTimers(dt);
-                if (p1Active) p1.UpdateTimers(dt);
+                // Revive: every active pair is checked (i channels revive on j). This is an
+                // O(4x4) loop, trivially cheap, and correctly generalizes the original
+                // 2-player "each checks the other" logic to any number of active players.
+                if (interact) {
+                    for (int i = 0; i < 4; i++) {
+                        if (!active[i]) continue;
+                        for (int j = 0; j < 4; j++) {
+                            if (i == j || !active[j]) continue;
+                            UpdateRevive(session->slots[i].player, session->slots[j].player, interact[i], dt, kReviveRange);
+                        }
+                    }
+                }
+
+                for (int i = 0; i < 4; i++) {
+                    if (active[i]) ApplyHazardDamage(hazard, session->slots[i].player, dt, hazardCarry[i]);
+                }
+
+                for (int i = 0; i < 4; i++) {
+                    if (active[i]) session->slots[i].player.UpdateTimers(dt);
+                }
 
                 // state value 3 = "absent" (slot not Connected): not a real PlayerState,
                 // repurposed on the wire so an inactive slot renders as not-present
@@ -657,8 +687,10 @@ int main(int argc, char** argv) {
                 static constexpr uint8_t kSnapshotStateAbsent = 3;
 
                 SnapshotMsg snap{};
-                snap.players[0] = PlayerSnapshot{ p0.position.x, p0.position.y, p0.hp, p0Active ? (uint8_t)p0.state : kSnapshotStateAbsent, p0.inventory.Count(ItemType::RevivePotion), p0.channelTimer };
-                snap.players[1] = PlayerSnapshot{ p1.position.x, p1.position.y, p1.hp, p1Active ? (uint8_t)p1.state : kSnapshotStateAbsent, p1.inventory.Count(ItemType::RevivePotion), p1.channelTimer };
+                for (int i = 0; i < 4; i++) {
+                    Player& p = session->slots[i].player;
+                    snap.players[i] = PlayerSnapshot{ p.position.x, p.position.y, p.hp, active[i] ? (uint8_t)p.state : kSnapshotStateAbsent, p.inventory.Count(ItemType::RevivePotion), p.channelTimer };
+                }
                 for (int i = 0; i < 2 && i < (int)items.size(); i++) {
                     snap.items[i] = WorldItemSnapshot{ items[i].position.x, items[i].position.y, items[i].active };
                 }
@@ -670,14 +702,14 @@ int main(int argc, char** argv) {
                 std::vector<uint8_t> snapBytes;
                 SerializeStruct(snap, snapBytes);
                 uint32_t seq = sessionSnapshotSeq[sessionEntry]++;
-                for (int i = 0; i < 2; i++) {
+                for (int i = 0; i < 4; i++) {
                     if (session->slots[i].state == SlotState::Connected) {
                         SendUnreliable(socket, session->slots[i].clientIp, session->slots[i].clientPort, seq, MessageType::Snapshot, snapBytes.data(), snapBytes.size());
                     }
                 }
 
                 // Retransmit any unacked reliable messages for this session's slots
-                for (int i = 0; i < 2; i++) {
+                for (int i = 0; i < 4; i++) {
                     if (session->slots[i].state != SlotState::Connected) continue;
                     auto toResend = session->slots[i].reliableSender.GetMessagesToRetransmit(now, 0.1);
                     for (auto& msg : toResend) {
