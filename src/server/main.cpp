@@ -285,7 +285,16 @@ void SmokeTestSessionManager() {
     assert(outcome2.sessionToken != 0);
     assert(outcome2.sessionToken != outcome1.sessionToken);
 
-    // Case 3: third connector rejected, session full
+    // Third and fourth connectors fill the remaining slots (sessions now hold 4 slots)
+    ConnectOutcome outcome3a = manager.HandleConnect(game1Code, 0, "127.0.0.1", 5006, 0.0);
+    assert(outcome3a.result == ConnectResult::Joined);
+    assert(outcome3a.slotIndex == 2);
+
+    ConnectOutcome outcome3b = manager.HandleConnect(game1Code, 0, "127.0.0.1", 5007, 0.0);
+    assert(outcome3b.result == ConnectResult::Joined);
+    assert(outcome3b.slotIndex == 3);
+
+    // Case 3: fifth connector rejected, session full (now that sessions hold 4 slots)
     ConnectOutcome outcome3 = manager.HandleConnect(game1Code, 0, "127.0.0.1", 5002, 0.0);
     assert(outcome3.result == ConnectResult::Rejected);
     assert(outcome3.rejectReason == RejectReason::SessionFull);
@@ -358,6 +367,29 @@ void SmokeTestSessionManager() {
     assert(joinCreated.result == ConnectResult::Joined);
     assert(joinCreated.slotIndex == 1);
     assert(joinCreated.roomCode == createOutcome.roomCode);
+
+    // 4-player fill: a fresh room accepts exactly 4 joiners, rejects the 5th
+    ConnectOutcome fill1 = manager.HandleConnect("", 0, "127.0.0.1", 8000, 400.0);
+    assert(fill1.result == ConnectResult::Created);
+    assert(fill1.slotIndex == 0);
+    std::string fillCode = fill1.roomCode;
+
+    ConnectOutcome fill2 = manager.HandleConnect(fillCode, 0, "127.0.0.1", 8001, 400.0);
+    assert(fill2.result == ConnectResult::Joined);
+    assert(fill2.slotIndex == 1);
+
+    ConnectOutcome fill3 = manager.HandleConnect(fillCode, 0, "127.0.0.1", 8002, 400.0);
+    assert(fill3.result == ConnectResult::Joined);
+    assert(fill3.slotIndex == 2);
+
+    ConnectOutcome fill4 = manager.HandleConnect(fillCode, 0, "127.0.0.1", 8003, 400.0);
+    assert(fill4.result == ConnectResult::Joined);
+    assert(fill4.slotIndex == 3);
+
+    // 5th joiner rejected: all 4 slots full
+    ConnectOutcome fill5 = manager.HandleConnect(fillCode, 0, "127.0.0.1", 8004, 400.0);
+    assert(fill5.result == ConnectResult::Rejected);
+    assert(fill5.rejectReason == RejectReason::SessionFull);
 }
 
 void RunAllSmokeTests() {
