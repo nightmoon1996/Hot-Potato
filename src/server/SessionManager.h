@@ -5,6 +5,7 @@
 #include <vector>
 #include <cstdint>
 #include <cstdlib>
+#include <cstdio>
 #include "Session.h"
 #include "../shared/Protocol.h"
 
@@ -20,6 +21,7 @@ struct ConnectOutcome {
     int slotIndex;
     uint32_t sessionToken;
     RejectReason rejectReason;
+    std::string roomCode;
 };
 
 class SessionManager {
@@ -28,24 +30,23 @@ public:
                                  const std::string& clientIp, uint16_t clientPort, double nowSeconds) {
         // Case 4: reconnect token matches a disconnected slot
         if (reconnectToken != 0) {
-            auto it = sessions.find(sessionName);
-            if (it != sessions.end()) {
-                int slotIndex = it->second.FindDisconnectedSlotByToken(reconnectToken);
+            for (auto& entry : sessions) {
+                int slotIndex = entry.second.FindDisconnectedSlotByToken(reconnectToken);
                 if (slotIndex != -1) {
-                    PlayerSlot& slot = it->second.slots[slotIndex];
+                    PlayerSlot& slot = entry.second.slots[slotIndex];
                     slot.state = SlotState::Connected;
                     slot.clientIp = clientIp;
                     slot.clientPort = clientPort;
                     slot.lastPacketAtSeconds = nowSeconds;
-                    return { ConnectResult::Reconnected, slotIndex, slot.sessionToken, RejectReason::SessionFull };
+                    return { ConnectResult::Reconnected, slotIndex, slot.sessionToken, RejectReason::SessionFull, entry.first };
                 }
             }
             // Case 5: token present but no match -> fall through to fresh-connect logic
         }
 
-        // Case 1: session doesn't exist -> create it, assign slot 0
-        auto it = sessions.find(sessionName);
-        if (it == sessions.end()) {
+        // Create path: empty session name means "create a new room, generate a code"
+        if (sessionName.empty()) {
+            std::string code = GenerateUniqueRoomCode();
             Session newSession;
             uint32_t token = GenerateToken();
             newSession.slots[0].state = SlotState::Connected;
@@ -55,11 +56,16 @@ public:
             newSession.slots[0].lastPacketAtSeconds = nowSeconds;
             newSession.slots[0].player = Player(kSlot0Spawn);
             newSession.slots[1].player = Player(kSlot1Spawn);
-            sessions[sessionName] = newSession;
-            return { ConnectResult::Created, 0, token, RejectReason::SessionFull };
+            sessions[code] = newSession;
+            return { ConnectResult::Created, 0, token, RejectReason::SessionFull, code };
         }
 
-        // Case 2: session exists with an empty slot
+        // Join path: non-empty name must already exist
+        auto it = sessions.find(sessionName);
+        if (it == sessions.end()) {
+            return { ConnectResult::Rejected, -1, 0, RejectReason::RoomNotFound, "" };
+        }
+
         Session& session = it->second;
         int emptySlot = session.FindEmptySlot();
         if (emptySlot != -1) {
@@ -70,11 +76,10 @@ public:
             session.slots[emptySlot].clientPort = clientPort;
             session.slots[emptySlot].lastPacketAtSeconds = nowSeconds;
             session.slots[emptySlot].player = Player(emptySlot == 0 ? kSlot0Spawn : kSlot1Spawn);
-            return { ConnectResult::Joined, emptySlot, token, RejectReason::SessionFull };
+            return { ConnectResult::Joined, emptySlot, token, RejectReason::SessionFull, sessionName };
         }
 
-        // Case 3: session full
-        return { ConnectResult::Rejected, -1, 0, RejectReason::SessionFull };
+        return { ConnectResult::Rejected, -1, 0, RejectReason::SessionFull, "" };
     }
 
     Session* GetSession(const std::string& sessionName) {
@@ -108,5 +113,20 @@ private:
             token = (uint32_t)std::rand();
         }
         return token;
+    }
+
+    std::string GenerateUniqueRoomCode() {
+        for (int attempt = 0; attempt < 20; attempt++) {
+            int number = std::rand() % 1000000;
+            char buffer[7];
+            std::snprintf(buffer, sizeof(buffer), "%06d", number);
+            std::string code(buffer);
+            if (sessions.find(code) == sessions.end()) {
+                return code;
+            }
+        }
+        // Exceedingly unlikely at this scale (up to 1,000,000 possible codes);
+        // fall back to a fixed sentinel rather than looping forever or crashing.
+        return "000000";
     }
 };

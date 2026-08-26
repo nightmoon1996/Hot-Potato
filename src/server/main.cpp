@@ -271,26 +271,27 @@ void SmokeTestSerialization() {
 void SmokeTestSessionManager() {
     SessionManager manager;
 
-    // Case 1: fresh session created, first connector gets slot 0
-    ConnectOutcome outcome1 = manager.HandleConnect("game1", 0, "127.0.0.1", 5000, 0.0);
+    // Case 1: fresh session created via empty name, first connector gets slot 0
+    ConnectOutcome outcome1 = manager.HandleConnect("", 0, "127.0.0.1", 5000, 0.0);
     assert(outcome1.result == ConnectResult::Created);
     assert(outcome1.slotIndex == 0);
     assert(outcome1.sessionToken != 0);
+    std::string game1Code = outcome1.roomCode;
 
-    // Case 2: second connector joins the open slot
-    ConnectOutcome outcome2 = manager.HandleConnect("game1", 0, "127.0.0.1", 5001, 0.0);
+    // Case 2: second connector joins the open slot via the generated code
+    ConnectOutcome outcome2 = manager.HandleConnect(game1Code, 0, "127.0.0.1", 5001, 0.0);
     assert(outcome2.result == ConnectResult::Joined);
     assert(outcome2.slotIndex == 1);
     assert(outcome2.sessionToken != 0);
     assert(outcome2.sessionToken != outcome1.sessionToken);
 
     // Case 3: third connector rejected, session full
-    ConnectOutcome outcome3 = manager.HandleConnect("game1", 0, "127.0.0.1", 5002, 0.0);
+    ConnectOutcome outcome3 = manager.HandleConnect(game1Code, 0, "127.0.0.1", 5002, 0.0);
     assert(outcome3.result == ConnectResult::Rejected);
     assert(outcome3.rejectReason == RejectReason::SessionFull);
 
     // Simulate slot 0 going disconnected (timeout), then reconnecting
-    Session* session = manager.GetSession("game1");
+    Session* session = manager.GetSession(game1Code);
     assert(session != nullptr);
     session->slots[0].lastPacketAtSeconds = 0.0;
     session->slots[1].lastPacketAtSeconds = 59.0; // recent packet: must not time out alongside slot 0
@@ -299,15 +300,15 @@ void SmokeTestSessionManager() {
     assert(session->slots[1].state == SlotState::Connected); // slot 1 untouched (recent packet)
 
     // Case 4: reconnect with the correct token succeeds, resumes the same slot
-    ConnectOutcome outcome4 = manager.HandleConnect("game1", outcome1.sessionToken, "127.0.0.1", 5003, 61.0);
+    ConnectOutcome outcome4 = manager.HandleConnect(game1Code, outcome1.sessionToken, "127.0.0.1", 5003, 61.0);
     assert(outcome4.result == ConnectResult::Reconnected);
     assert(outcome4.slotIndex == 0);
     assert(outcome4.sessionToken == outcome1.sessionToken);
     assert(session->slots[0].state == SlotState::Connected);
 
     // Case 5: reconnect with a token that doesn't match anything falls back to fresh-connect logic
-    // (session "game1" is now full again after the reconnect above, so this should be rejected)
-    ConnectOutcome outcome5 = manager.HandleConnect("game1", 999999, "127.0.0.1", 5004, 61.0);
+    // (session is now full again after the reconnect above, so this should be rejected)
+    ConnectOutcome outcome5 = manager.HandleConnect(game1Code, 999999, "127.0.0.1", 5004, 61.0);
     assert(outcome5.result == ConnectResult::Rejected);
 
     // Full timeout-to-Empty cycle: disconnect slot 0 again, let both timeouts elapse, slot becomes Empty
@@ -317,10 +318,34 @@ void SmokeTestSessionManager() {
     session->CheckTimeouts(220.0); // another 60s (120s total from lastPacketAtSeconds) -> Empty
     assert(session->slots[0].state == SlotState::Empty);
 
-    // A new session name creates an independent session
-    ConnectOutcome outcomeOther = manager.HandleConnect("game2", 0, "127.0.0.1", 6000, 0.0);
+    // A separate create call generates an independent session
+    ConnectOutcome outcomeOther = manager.HandleConnect("", 0, "127.0.0.1", 6000, 0.0);
     assert(outcomeOther.result == ConnectResult::Created);
     assert(outcomeOther.slotIndex == 0);
+
+    // Create-room path: empty name generates a 6-digit code
+    ConnectOutcome createOutcome = manager.HandleConnect("", 0, "127.0.0.1", 7000, 300.0);
+    assert(createOutcome.result == ConnectResult::Created);
+    assert(createOutcome.roomCode.size() == 6);
+    for (char c : createOutcome.roomCode) {
+        assert(c >= '0' && c <= '9');
+    }
+
+    // Two sequential create requests generate different codes (overwhelmingly likely; not a hard guarantee)
+    ConnectOutcome createOutcome2 = manager.HandleConnect("", 0, "127.0.0.1", 7001, 300.0);
+    assert(createOutcome2.result == ConnectResult::Created);
+    assert(createOutcome2.roomCode != createOutcome.roomCode);
+
+    // Joining a non-empty name that doesn't exist is rejected with RoomNotFound
+    ConnectOutcome joinMissing = manager.HandleConnect("999999", 0, "127.0.0.1", 7002, 300.0);
+    assert(joinMissing.result == ConnectResult::Rejected);
+    assert(joinMissing.rejectReason == RejectReason::RoomNotFound);
+
+    // Joining a code that WAS created via the create path succeeds via existing join logic
+    ConnectOutcome joinCreated = manager.HandleConnect(createOutcome.roomCode, 0, "127.0.0.1", 7003, 300.0);
+    assert(joinCreated.result == ConnectResult::Joined);
+    assert(joinCreated.slotIndex == 1);
+    assert(joinCreated.roomCode == createOutcome.roomCode);
 }
 
 void RunAllSmokeTests() {
