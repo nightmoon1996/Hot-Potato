@@ -20,10 +20,11 @@ void NetClient::SendAck(uint32_t ackedSeq) {
     socket.SendTo(serverIp, serverPort, packet.data(), packet.size());
 }
 
-bool NetClient::CreateRoom(const std::string& ip, uint16_t port) {
+bool NetClient::CreateRoom(const std::string& ip, uint16_t port, GameMode mode) {
     serverIp = ip;
     serverPort = port;
     sessionName = "";
+    requestedMode = mode;
     return AttemptConnect(0);
 }
 
@@ -31,6 +32,7 @@ bool NetClient::JoinRoom(const std::string& ip, uint16_t port, const std::string
     serverIp = ip;
     serverPort = port;
     sessionName = roomCode;
+    requestedMode = GameMode::FFA; // ignored by the server when sessionName is non-empty (a join)
     return AttemptConnect(0);
 }
 
@@ -42,6 +44,7 @@ bool NetClient::AttemptConnect(uint32_t reconnectToken) {
     ConnectRequestMsg req{};
     std::strncpy(req.sessionName, sessionName.c_str(), sizeof(req.sessionName) - 1);
     req.reconnectToken = reconnectToken;
+    req.requestedMode = requestedMode;
 
     std::vector<uint8_t> reqBytes;
     SerializeStruct(req, reqBytes);

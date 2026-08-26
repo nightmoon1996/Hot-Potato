@@ -12,6 +12,10 @@ public:
     void Draw() {
         DrawText("MAXION TEST", 380, 100, 32, BLACK);
 
+        DrawRectangleRec(modeButton, LIGHTGRAY);
+        DrawRectangleLinesEx(modeButton, 1, DARKGRAY);
+        DrawText(ModeLabel(selectedMode), (int)modeButton.x + 5, (int)modeButton.y + 8, 12, BLACK);
+
         DrawRectangleRec(createButton, LIGHTGRAY);
         DrawRectangleLinesEx(createButton, 1, DARKGRAY);
         DrawText("Create Room", (int)createButton.x + 20, (int)createButton.y + 12, 18, BLACK);
@@ -41,13 +45,17 @@ public:
             codeInput.pop_back();
         }
 
+        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(GetMousePosition(), modeButton)) {
+            selectedMode = NextMode(selectedMode);
+        }
+
         bool createClicked = IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(GetMousePosition(), createButton);
         bool joinClicked = (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(GetMousePosition(), joinButton)) ||
                             (IsKeyPressed(KEY_ENTER) && codeInput.size() == 6);
 
         if (createClicked) {
             errorMessage.clear();
-            if (netClient.CreateRoom(serverIp, serverPort)) {
+            if (netClient.CreateRoom(serverIp, serverPort, selectedMode)) {
                 done = true;
             } else {
                 errorMessage = RejectReasonToMessage(netClient.GetLastRejectReason());
@@ -69,12 +77,34 @@ public:
         }
     }
 
+    // Pure mode-cycling logic, extracted so it's testable without a raylib context
+    // (mirrors AppendDigitInput's public-static-for-testability pattern above).
+    static const char* ModeLabel(GameMode mode) {
+        switch (mode) {
+            case GameMode::FFA: return "Mode: FFA (click to cycle)";
+            case GameMode::TwoVTwo: return "Mode: 2v2 (click to cycle)";
+            case GameMode::RevivePotionTest: return "Mode: Revive Test (click to cycle)";
+            default: return "Mode: ?";
+        }
+    }
+
+    static GameMode NextMode(GameMode mode) {
+        switch (mode) {
+            case GameMode::FFA: return GameMode::TwoVTwo;
+            case GameMode::TwoVTwo: return GameMode::RevivePotionTest;
+            case GameMode::RevivePotionTest: return GameMode::FFA;
+            default: return GameMode::FFA;
+        }
+    }
+
 private:
     std::string codeInput;
     std::string errorMessage;
     bool done = false;
+    GameMode selectedMode = GameMode::FFA;
 
-    Rectangle createButton{ 400.0f, 180.0f, 200.0f, 40.0f };
+    Rectangle modeButton{ 400.0f, 140.0f, 200.0f, 30.0f };
+    Rectangle createButton{ 400.0f, 190.0f, 200.0f, 40.0f };
     Rectangle codeBox{ 400.0f, 330.0f, 200.0f, 30.0f };
     Rectangle joinButton{ 400.0f, 370.0f, 200.0f, 40.0f };
 

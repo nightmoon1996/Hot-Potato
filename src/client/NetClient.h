@@ -11,7 +11,7 @@
 
 class NetClient {
 public:
-    bool CreateRoom(const std::string& serverIp, uint16_t serverPort);
+    bool CreateRoom(const std::string& serverIp, uint16_t serverPort, GameMode mode);
     bool JoinRoom(const std::string& serverIp, uint16_t serverPort, const std::string& roomCode);
     bool Reconnect();
     void SendInput(float moveX, float moveY, bool interactHeld, bool attackPressed,
@@ -22,6 +22,7 @@ public:
     const SnapshotMsg& GetLatestSnapshot() const { return latestSnapshot; }
     uint8_t GetPlayerSlot() const { return playerSlot; }
     const WelcomeMsg& GetGameConstants() const { return gameConstants; }
+    GameMode GetGameMode() const { return gameConstants.gameMode; }
     bool IsConnected() const { return connected; }
     bool HasReceivedSnapshot() const { return receivedSnapshot; }
     const char* GetRoomCode() const { return gameConstants.roomCode; }
@@ -32,6 +33,7 @@ private:
     std::string serverIp;
     uint16_t serverPort = 0;
     std::string sessionName;
+    GameMode requestedMode = GameMode::FFA;
     uint32_t sessionToken = 0;
     uint8_t playerSlot = 0;
     bool connected = false;

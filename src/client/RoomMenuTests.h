@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cassert>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -47,6 +48,14 @@ inline void RunRoomMenuSmokeTests() {
             exit(1);
         }
         printf("PASS: input is capped at 6 characters, extras dropped\n");
+    }
+
+    // Test 4: mode cycling: FFA -> 2v2 -> RevivePotionTest -> FFA (wraps around)
+    {
+        assert(RoomMenu::NextMode(GameMode::FFA) == GameMode::TwoVTwo);
+        assert(RoomMenu::NextMode(GameMode::TwoVTwo) == GameMode::RevivePotionTest);
+        assert(RoomMenu::NextMode(GameMode::RevivePotionTest) == GameMode::FFA);
+        printf("PASS: mode cycling wraps FFA -> 2v2 -> RevivePotionTest -> FFA\n");
     }
 
     printf("All RoomMenu smoke tests passed.\n");

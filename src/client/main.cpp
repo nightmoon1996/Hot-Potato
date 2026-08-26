@@ -173,21 +173,25 @@ int main(int argc, char** argv)
             drawPlayer(i, snap.players[i], kPlayerColors[i], kPlayerLabels[i]);
         }
 
-        // Draw the potato itself (a simple colored circle; no arc/height rendering this phase).
-        // Guarded: before the first snapshot arrives `snap` is default-constructed, and a
-        // potato that is neither held nor in flight (no Alive player to hold it) has no
-        // meaningful position — in both cases drawing would put a phantom circle at (0,0).
-        if (netClient.HasReceivedSnapshot() && (snap.potato.held || snap.potato.inFlight)) {
-            const PotatoSnapshot& potato = snap.potato;
-            Color potatoColor = BROWN;
-            DrawCircleV(Vector2{ potato.posX, potato.posY }, 10.0f, potatoColor);
+        GameMode myMode = netClient.GetGameMode();
 
-            // Explosion countdown, shown above whoever's currently holding it.
-            if (potato.held && potato.holderSlot >= 0 && potato.holderSlot < kMaxPlayersPerSession) {
-                const PlayerSnapshot& holderSnap = snap.players[potato.holderSlot];
-                Vector2 textPos{ holderSnap.posX, holderSnap.posY - 50.0f };
-                Color timerColor = potato.explodeTimer <= 2.0f ? RED : BLACK; // urgency cue in the final 2 seconds
-                DrawText(TextFormat("%.1f", potato.explodeTimer), (int)textPos.x - 12, (int)textPos.y, 16, timerColor);
+        if (myMode != GameMode::RevivePotionTest) {
+            // Draw the potato itself (a simple colored circle; no arc/height rendering this phase).
+            // Guarded: before the first snapshot arrives `snap` is default-constructed, and a
+            // potato that is neither held nor in flight (no Alive player to hold it) has no
+            // meaningful position — in both cases drawing would put a phantom circle at (0,0).
+            if (netClient.HasReceivedSnapshot() && (snap.potato.held || snap.potato.inFlight)) {
+                const PotatoSnapshot& potato = snap.potato;
+                Color potatoColor = BROWN;
+                DrawCircleV(Vector2{ potato.posX, potato.posY }, 10.0f, potatoColor);
+
+                // Explosion countdown, shown above whoever's currently holding it.
+                if (potato.held && potato.holderSlot >= 0 && potato.holderSlot < kMaxPlayersPerSession) {
+                    const PlayerSnapshot& holderSnap = snap.players[potato.holderSlot];
+                    Vector2 textPos{ holderSnap.posX, holderSnap.posY - 50.0f };
+                    Color timerColor = potato.explodeTimer <= 2.0f ? RED : BLACK; // urgency cue in the final 2 seconds
+                    DrawText(TextFormat("%.1f", potato.explodeTimer), (int)textPos.x - 12, (int)textPos.y, 16, timerColor);
+                }
             }
         }
 
@@ -215,9 +219,24 @@ int main(int argc, char** argv)
         DrawText(TextFormat("You are slot %d. WASD move, E pickup/revive, Mouse: hold to charge throw, release to throw.", (int)mySlot), 10, 30, 16, BLACK);
         DrawText("F1: Debug Menu", 10, 50, 16, DARKGRAY);
 
-        {
-            const MatchSnapshot& matchSnap = snap.match;
-            if (netClient.HasReceivedSnapshot()) {
+        if (netClient.HasReceivedSnapshot()) {
+            if (myMode == GameMode::RevivePotionTest) {
+                // No match/round/score concept in this mode — nothing to show here.
+            } else if (myMode == GameMode::TwoVTwo) {
+                const MatchSnapshot& matchSnap = snap.match;
+                if (matchSnap.matchOver) {
+                    const char* winnerText = (matchSnap.winnerSlot == 0) ? "Match Over! Team A Wins!" :
+                                             (matchSnap.winnerSlot == 1) ? "Match Over! Team B Wins!" : "Match Over! (no winner)";
+                    DrawText(winnerText, 10, 70, 20, RED);
+                } else {
+                    const char* roundText = matchSnap.inTiebreak ? "Round: Tiebreak" : TextFormat("Round: %d / %d", matchSnap.roundNumber, kRoundsPerMatch);
+                    DrawText(roundText, 10, 70, 16, BLACK);
+                }
+                DrawText(TextFormat("Team A: %d", matchSnap.teamScore[0]), 10, 90, 14, BLUE);
+                DrawText(TextFormat("Team B: %d", matchSnap.teamScore[1]), 10, 108, 14, MAROON);
+            } else {
+                // FFA: existing per-player score HUD, unchanged from the earlier phase that added it.
+                const MatchSnapshot& matchSnap = snap.match;
                 if (matchSnap.matchOver) {
                     const char* winnerText = (matchSnap.winnerSlot >= 0 && matchSnap.winnerSlot < kMaxPlayersPerSession)
                         ? TextFormat("Match Over! Winner: P%d", matchSnap.winnerSlot + 1)
