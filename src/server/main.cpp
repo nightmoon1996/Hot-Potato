@@ -1603,6 +1603,7 @@ int main(int argc, char** argv) {
     std::map<std::string, float[kMaxPlayersPerSession]> sessionChargeTimer;
     std::map<std::string, MatchState> sessionMatch;
     std::map<std::string, InputMsg[kMaxPlayersPerSession]> sessionLatestInput;
+    std::map<std::string, GameMode> sessionGameMode;
 
     const double tickInterval = 1.0 / 60.0;
     double lastTick = NowSeconds();
@@ -1668,6 +1669,7 @@ int main(int argc, char** argv) {
                                 freshPotato.explodeTimer = ComputeExplodeTimerForCatch(0);
                                 sessionPotato[outcome.roomCode] = freshPotato;
                                 sessionMatch[outcome.roomCode] = MatchState{};
+                                sessionGameMode[outcome.roomCode] = msg.requestedMode;
                             }
 
                             WelcomeMsg welcome{
@@ -1675,7 +1677,8 @@ int main(int argc, char** argv) {
                                 Player::kMaxHp, Player::kDownedDuration, Player::kDeathRespawnDelay,
                                 Player::kReviveHp, Player::kRespawnHp, Player::kAttackCooldown,
                                 Player::kAttackRange, Player::kAttackDamage, Player::kChannelDuration,
-                                kHazardDamagePerSecond, Inventory::kCapacity, {}
+                                kHazardDamagePerSecond, Inventory::kCapacity, {},
+                                sessionGameMode[outcome.roomCode]
                             };
                             std::strncpy(welcome.roomCode, outcome.roomCode.c_str(), sizeof(welcome.roomCode) - 1);
                             PlayerSlot& slot = session->slots[outcome.slotIndex];

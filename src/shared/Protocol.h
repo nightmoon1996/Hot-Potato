@@ -26,6 +26,12 @@ enum class RejectReason : uint8_t {
     RoomNotFound
 };
 
+enum class GameMode : uint8_t {
+    FFA,
+    TwoVTwo,
+    RevivePotionTest
+};
+
 enum class DebugAction : uint8_t {
     Kill,
     Revive,
@@ -48,6 +54,9 @@ struct PacketHeader {
 struct ConnectRequestMsg {
     char sessionName[32];
     uint32_t reconnectToken; // 0 = no token
+    GameMode requestedMode; // only meaningful when sessionName is empty (a create request);
+                            // ignored when joining an existing room, since the room's mode
+                            // was already fixed by whoever created it
 };
 
 struct WelcomeMsg {
@@ -65,6 +74,7 @@ struct WelcomeMsg {
     float hazardDamagePerSecond;
     int inventoryCapacity;
     char roomCode[7]; // 6 digits + null terminator
+    GameMode gameMode; // the ACTUAL mode of the room the caller ended up in (create or join)
 };
 
 struct RejectedMsg {
