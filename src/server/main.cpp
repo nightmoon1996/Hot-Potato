@@ -27,7 +27,8 @@
 static void SimulateSessionTick(Session& session, std::vector<WorldItem>& items, HazardZone& hazard,
                                 float* hazardCarry, bool* attack, bool* interact, float dt,
                                 bool* activeOut, HotPotato& potato, float* chargeTimer,
-                                InputMsg* latestInputs, Rectangle courtBounds, MatchState& match);
+                                InputMsg* latestInputs, Rectangle courtBounds, MatchState& match,
+                                GameMode mode);
 static void StartNewMatch(Session& session, MatchState& match, HotPotato& potato, float* chargeTimer);
 
 void SmokeTestItems() {
@@ -447,7 +448,7 @@ void SmokeTestSimulationTick() {
     for (int tick = 0; tick < 150; tick++) {
         bool active[kMaxPlayersPerSession];
         SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
-                             potato, chargeTimer, latestInputs, courtBounds, match);
+                             potato, chargeTimer, latestInputs, courtBounds, match, GameMode::FFA);
         assert(active[0] && active[1] && active[2]);
         assert(active[3] == false);
     }
@@ -476,7 +477,7 @@ void SmokeTestSimulationTick() {
     for (int tick = 0; tick < 150; tick++) {
         bool active[kMaxPlayersPerSession];
         SimulateSessionTick(noPotion, items, hazard, carry2, attack2, interact, dt, active,
-                             potato2, chargeTimer2, latestInputs2, courtBounds, match2);
+                             potato2, chargeTimer2, latestInputs2, courtBounds, match2, GameMode::FFA);
     }
     assert(noPotion.slots[1].player.state == PlayerState::Downed);
     assert(noPotion.slots[0].player.channelTimer == 0.0f);
@@ -549,7 +550,7 @@ void SmokeTestHotPotato() {
         for (int i = 0; i < chargeTicks; i++) {
             bool active[kMaxPlayersPerSession];
             SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
-                                 potato, chargeTimer, latestInputs, courtBounds, match);
+                                 potato, chargeTimer, latestInputs, courtBounds, match, GameMode::FFA);
         }
         assert(chargeTimer[0] == kMaxChargeDuration);
         assert(potato.held == true); // still held, not yet released
@@ -562,7 +563,7 @@ void SmokeTestHotPotato() {
         {
             bool active[kMaxPlayersPerSession];
             SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
-                                 potato, chargeTimer, latestInputs, courtBounds, match);
+                                 potato, chargeTimer, latestInputs, courtBounds, match, GameMode::FFA);
         }
         assert(potato.held == false);
         assert(chargeTimer[0] == 0.0f); // reset after release
@@ -573,7 +574,7 @@ void SmokeTestHotPotato() {
         for (int i = 0; i < 600 && !caught; i++) {
             bool active[kMaxPlayersPerSession];
             SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
-                                 potato, chargeTimer, latestInputs, courtBounds, match);
+                                 potato, chargeTimer, latestInputs, courtBounds, match, GameMode::FFA);
             if (potato.held && potato.holderSlot == 1) caught = true;
         }
         assert(caught);
@@ -615,7 +616,7 @@ void SmokeTestHotPotato() {
         const float dt = 1.0f / 60.0f;
         bool active[kMaxPlayersPerSession];
         SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
-                             potato, chargeTimer, latestInputs, courtBounds, match);
+                             potato, chargeTimer, latestInputs, courtBounds, match, GameMode::FFA);
 
         assert(session.slots[0].player.state == PlayerState::Downed);
         assert(potato.held == true);
@@ -676,7 +677,7 @@ void SmokeTestHotPotato() {
             latestInputs[thrower].chargingThrow = true;
             for (int i = 0; i < 30; i++) {
                 SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
-                                     potato, chargeTimer, latestInputs, courtBounds, match);
+                                     potato, chargeTimer, latestInputs, courtBounds, match, GameMode::FFA);
             }
             assert(chargeTimer[thrower] > 0.0f);
 
@@ -685,13 +686,13 @@ void SmokeTestHotPotato() {
             latestInputs[thrower].aimDirX = aimX;
             latestInputs[thrower].aimDirY = 0.0f;
             SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
-                                 potato, chargeTimer, latestInputs, courtBounds, match);
+                                 potato, chargeTimer, latestInputs, courtBounds, match, GameMode::FFA);
             latestInputs[thrower].releaseThrow = false;
 
             bool caught = false;
             for (int i = 0; i < 600 && !caught; i++) {
                 SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
-                                     potato, chargeTimer, latestInputs, courtBounds, match);
+                                     potato, chargeTimer, latestInputs, courtBounds, match, GameMode::FFA);
                 if (potato.held && potato.holderSlot == receiver) caught = true;
             }
             assert(caught);
@@ -707,7 +708,7 @@ void SmokeTestHotPotato() {
         // Force the explosion on slot 0.
         potato.explodeTimer = 0.01f;
         SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
-                             potato, chargeTimer, latestInputs, courtBounds, match);
+                             potato, chargeTimer, latestInputs, courtBounds, match, GameMode::FFA);
 
         assert(session.slots[0].player.state == PlayerState::Downed);
         // (a) new holder is a genuinely Alive player...
@@ -751,7 +752,7 @@ void SmokeTestHotPotato() {
         // Slot 0 drops out while still holding the potato.
         session.slots[0].state = SlotState::DisconnectedPending;
         SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
-                             potato, chargeTimer, latestInputs, courtBounds, match);
+                             potato, chargeTimer, latestInputs, courtBounds, match, GameMode::FFA);
 
         assert(active[0] == false);
         assert(potato.held == true);
@@ -797,7 +798,7 @@ void SmokeTestHotPotato() {
         for (int i = 0; i < chargeTicks; i++) {
             bool active[kMaxPlayersPerSession];
             SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
-                                 potato, chargeTimer, latestInputs, courtBounds, match);
+                                 potato, chargeTimer, latestInputs, courtBounds, match, GameMode::FFA);
         }
         latestInputs[0].chargingThrow = false;
         latestInputs[0].releaseThrow = true;
@@ -806,7 +807,7 @@ void SmokeTestHotPotato() {
         {
             bool active[kMaxPlayersPerSession];
             SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
-                                 potato, chargeTimer, latestInputs, courtBounds, match);
+                                 potato, chargeTimer, latestInputs, courtBounds, match, GameMode::FFA);
         }
         latestInputs[0].releaseThrow = false;
         assert(potato.inFlight == true);
@@ -816,7 +817,7 @@ void SmokeTestHotPotato() {
         for (int i = 0; i < 60 && !bounced; i++) {
             bool active[kMaxPlayersPerSession];
             SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
-                                 potato, chargeTimer, latestInputs, courtBounds, match);
+                                 potato, chargeTimer, latestInputs, courtBounds, match, GameMode::FFA);
             assert(session.slots[0].player.state != PlayerState::Downed); // never downed in solo mode
             if (potato.velocity.x < 0.0f) bounced = true; // reflected off the +X wall
         }
@@ -960,7 +961,7 @@ void SmokeTestMatchOverFreezeAndNewMatch() {
         for (int i = 0; i < 30; i++) {
             bool active[kMaxPlayersPerSession];
             SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
-                                 potato, chargeTimer, latestInputs, courtBounds, match);
+                                 potato, chargeTimer, latestInputs, courtBounds, match, GameMode::FFA);
         }
 
         // No charging, no throw, no catch, no explosion, no round advance.
@@ -981,7 +982,7 @@ void SmokeTestMatchOverFreezeAndNewMatch() {
         {
             bool active[kMaxPlayersPerSession];
             SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
-                                 potato, chargeTimer, latestInputs, courtBounds, match);
+                                 potato, chargeTimer, latestInputs, courtBounds, match, GameMode::FFA);
         }
         assert(potato.position.x == 42.0f && potato.position.y == 17.0f);
         assert(potato.held == true && potato.holderSlot == 0); // still frozen otherwise
@@ -1010,7 +1011,7 @@ void SmokeTestMatchOverFreezeAndNewMatch() {
         {
             bool active[kMaxPlayersPerSession];
             SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, dt, active,
-                                 potato, chargeTimer, latestInputs, courtBounds, match);
+                                 potato, chargeTimer, latestInputs, courtBounds, match, GameMode::FFA);
         }
         assert(potato.explodeTimer < before);
     }
@@ -1229,6 +1230,80 @@ void SmokeTestDash() {
     }
 }
 
+void SmokeTestGameModes() {
+    // RevivePotionTest: hazard damage applies, potato logic does not run
+    {
+        Session session;
+        for (int i = 0; i < 2; i++) {
+            session.slots[i].state = SlotState::Connected;
+            session.slots[i].player = Player(kSpawnPoints[i]);
+        }
+        session.slots[0].player.position = Vector2{ 50.0f, 50.0f }; // inside a test hazard zone
+        HazardZone hazard{ Rectangle{ 0.0f, 0.0f, 100.0f, 100.0f } };
+        std::vector<WorldItem> items;
+        Rectangle courtBounds{ 0.0f, 0.0f, 1000.0f, 600.0f };
+        float hazardCarry[kMaxPlayersPerSession] = {};
+        bool attack[kMaxPlayersPerSession] = {};
+        bool interact[kMaxPlayersPerSession] = {};
+        float chargeTimer[kMaxPlayersPerSession] = {};
+        InputMsg latestInputs[kMaxPlayersPerSession] = {};
+        MatchState match{};
+        HotPotato potato{}; // never used in this mode, but the signature still requires one
+
+        int startingHp = session.slots[0].player.hp;
+        for (int tick = 0; tick < 60; tick++) { // 1 second at 60Hz
+            bool active[kMaxPlayersPerSession];
+            SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, 1.0f / 60.0f, active,
+                                 potato, chargeTimer, latestInputs, courtBounds, match, GameMode::RevivePotionTest);
+        }
+        assert(session.slots[0].player.hp < startingHp); // hazard damage applied
+        assert(potato.held == false && potato.inFlight == false); // potato never activated
+
+        // Confirm charging/releasing input is simply ignored in this mode (no potato exists)
+        latestInputs[0].chargingThrow = true;
+        latestInputs[0].releaseThrow = true;
+        bool active2[kMaxPlayersPerSession];
+        SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, 1.0f / 60.0f, active2,
+                             potato, chargeTimer, latestInputs, courtBounds, match, GameMode::RevivePotionTest);
+        assert(potato.held == false && potato.inFlight == false); // still untouched
+    }
+
+    // FFA: hazard damage does NOT apply (matches existing FFA behavior, must remain unchanged)
+    {
+        Session session;
+        for (int i = 0; i < 2; i++) {
+            session.slots[i].state = SlotState::Connected;
+            session.slots[i].player = Player(kSpawnPoints[i]);
+        }
+        session.slots[0].player.position = Vector2{ 50.0f, 50.0f };
+        HazardZone hazard{ Rectangle{ 0.0f, 0.0f, 100.0f, 100.0f } };
+        std::vector<WorldItem> items;
+        Rectangle courtBounds{ 0.0f, 0.0f, 1000.0f, 600.0f };
+        float hazardCarry[kMaxPlayersPerSession] = {};
+        bool attack[kMaxPlayersPerSession] = {};
+        bool interact[kMaxPlayersPerSession] = {};
+        float chargeTimer[kMaxPlayersPerSession] = {};
+        InputMsg latestInputs[kMaxPlayersPerSession] = {};
+        MatchState match{};
+        HotPotato potato{};
+        potato.held = true;
+        potato.holderSlot = 0;
+        potato.position = session.slots[0].player.position;
+        // Must be set explicitly: HotPotato{}'s default explodeTimer is 0.0f, which would
+        // otherwise detonate the potato (and ForceDown the holder) on the very first tick,
+        // confounding this test's hp comparison with an unrelated Hot-Potato mechanic.
+        potato.explodeTimer = ComputeExplodeTimerForCatch(0);
+
+        int startingHp = session.slots[0].player.hp;
+        for (int tick = 0; tick < 60; tick++) {
+            bool active[kMaxPlayersPerSession];
+            SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, 1.0f / 60.0f, active,
+                                 potato, chargeTimer, latestInputs, courtBounds, match, GameMode::FFA);
+        }
+        assert(session.slots[0].player.hp == startingHp); // hazard does NOT apply in FFA
+    }
+}
+
 void RunAllSmokeTests() {
     SmokeTestSerialization();
     std::printf("SmokeTestSerialization passed\n");
@@ -1265,6 +1340,9 @@ void RunAllSmokeTests() {
 
     SmokeTestDash();
     std::printf("SmokeTestDash passed\n");
+
+    SmokeTestGameModes();
+    std::printf("SmokeTestGameModes passed\n");
 
     std::printf("All smoke tests passed\n");
 }
@@ -1371,7 +1449,8 @@ static void StartNewMatch(Session& session, MatchState& match, HotPotato& potato
 static void SimulateSessionTick(Session& session, std::vector<WorldItem>& items, HazardZone& hazard,
                                 float* hazardCarry, bool* attack, bool* interact, float dt,
                                 bool* activeOut, HotPotato& potato, float* chargeTimer,
-                                InputMsg* latestInputs, Rectangle courtBounds, MatchState& match) {
+                                InputMsg* latestInputs, Rectangle courtBounds, MatchState& match,
+                                GameMode mode) {
     // Only players occupying a genuinely Connected slot are simulated.
     // Empty and DisconnectedPending slots are frozen: no movement, pickup,
     // attack, revive, hazard damage, or timer updates.
@@ -1402,6 +1481,15 @@ static void SimulateSessionTick(Session& session, std::vector<WorldItem>& items,
         }
     }
 
+    // Hazard zone: only active in RevivePotionTest, which uses the ORIGINAL Classic HP-loss
+    // mechanic (not Hot Potato's instant-Down) as its down-trigger, since it has no potato.
+    if (mode == GameMode::RevivePotionTest) {
+        for (int i = 0; i < kMaxPlayersPerSession; i++) {
+            if (active[i]) ApplyHazardDamage(hazard, session.slots[i].player, dt, hazardCarry[i]);
+        }
+    }
+
+    if (mode != GameMode::RevivePotionTest) {
     // --- Hot Potato: charge tracking, throw, flight, catch, explosion ---
     bool soloMode = false;
     {
@@ -1534,6 +1622,7 @@ static void SimulateSessionTick(Session& session, std::vector<WorldItem>& items,
     // Held potato tracks its holder's position each tick.
     if (potato.held && potato.holderSlot >= 0 && active[potato.holderSlot]) {
         potato.position = session.slots[potato.holderSlot].player.position;
+    }
     }
 
     // Revive: each active reviver channels against AT MOST ONE target per tick — the
@@ -1806,7 +1895,8 @@ int main(int argc, char** argv) {
                 InputMsg* latestInputs = sessionLatestInput.count(sessionEntry) ? sessionLatestInput[sessionEntry] : nullptr;
                 if (!latestInputs) continue; // session exists but no input map yet (shouldn't happen once creation-time init runs, but guards a null deref)
                 MatchState& match = sessionMatch[sessionEntry];
-                SimulateSessionTick(*session, items, hazard, hazardCarry, attack, interact, dt, active, potato, chargeTimer, latestInputs, courtBounds, match);
+                GameMode mode = sessionGameMode.count(sessionEntry) ? sessionGameMode[sessionEntry] : GameMode::FFA;
+                SimulateSessionTick(*session, items, hazard, hazardCarry, attack, interact, dt, active, potato, chargeTimer, latestInputs, courtBounds, match, mode);
 
                 // state value 3 = "absent" (slot not Connected): not a real PlayerState,
                 // repurposed on the wire so an inactive slot renders as not-present
