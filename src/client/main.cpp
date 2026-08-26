@@ -2,6 +2,7 @@
 #include <string>
 #include "NetClient.h"
 #include "DebugMenu.h"
+#include "Juice.h"
 #include "JuiceTests.h"
 
 int main(int argc, char** argv)
@@ -28,6 +29,7 @@ int main(int argc, char** argv)
     SetTargetFPS(60);
 
     DebugMenu debugMenu;
+    ClientEffectsState effects;
     const WelcomeMsg& constants = netClient.GetGameConstants();
     uint8_t mySlot = netClient.GetPlayerSlot();
 
@@ -52,9 +54,18 @@ int main(int argc, char** argv)
         netClient.PollNetwork(now);
 
         const SnapshotMsg& snap = netClient.GetLatestSnapshot();
+        effects.Update(snap, mySlot, dt);
 
         BeginDrawing();
         ClearBackground(RAYWHITE);
+
+        Camera2D camera{};
+        camera.offset = Vector2{ (float)screenWidth / 2.0f + effects.GetShakeOffsetX(), (float)screenHeight / 2.0f + effects.GetShakeOffsetY() };
+        camera.target = Vector2{ (float)screenWidth / 2.0f, (float)screenHeight / 2.0f };
+        camera.rotation = 0.0f;
+        camera.zoom = 1.0f;
+
+        BeginMode2D(camera);
 
         DrawRectangle((int)snap.hazardX, (int)snap.hazardY, (int)snap.hazardW, (int)snap.hazardH, Fade(RED, 0.3f));
 
@@ -90,6 +101,8 @@ int main(int argc, char** argv)
 
         drawPlayer(snap.players[0], BLUE, "P1");
         drawPlayer(snap.players[1], MAROON, "P2");
+
+        EndMode2D();
 
         DrawText(TextFormat("You are slot %d. WASD move, E pickup/revive, Q attack.", (int)mySlot), 10, 10, 16, BLACK);
         DrawText("F1: Debug Menu", 10, 30, 16, DARKGRAY);
