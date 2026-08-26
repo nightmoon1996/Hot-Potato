@@ -1,6 +1,6 @@
 #pragma once
 
-#include <raylib-cpp.hpp>
+#include "../shared/Geometry.h"
 #include "Player.h"
 
 static constexpr float kHazardDamagePerSecond = 5.0f;
@@ -13,7 +13,7 @@ inline void ApplyHazardDamage(const HazardZone& zone, Player& player, float dt, 
     if (player.state != PlayerState::Alive) {
         return;
     }
-    if (!CheckCollisionPointRec(player.position, zone.bounds)) {
+    if (!PointInRect(player.position, zone.bounds)) {
         return;
     }
     carryover += kHazardDamagePerSecond * dt;

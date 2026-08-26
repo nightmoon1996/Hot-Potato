@@ -1,6 +1,6 @@
 #pragma once
 
-#include <raylib-cpp.hpp>
+#include "../shared/Geometry.h"
 #include "Item.h"
 
 enum class PlayerState {

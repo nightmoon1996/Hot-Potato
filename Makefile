@@ -97,6 +97,20 @@ $(buildDir)/%.o: src/%.cpp Makefile
 execute: $(target)
 	$(target) $(ARGS)
 
+serverSources := $(call rwildcard,src/shared/,*.cpp) $(call rwildcard,src/server/,*.cpp)
+serverObjects := $(patsubst src/%, $(buildDir)/%, $(patsubst %.cpp, %.o, $(serverSources)))
+serverTarget := $(buildDir)/server$(if $(filter Windows,$(platform)),.exe,)
+
+.PHONY: server run-server
+
+server: $(serverTarget)
+
+$(serverTarget): $(serverObjects)
+	$(CXX) $(serverObjects) -o $(serverTarget) $(if $(filter Windows,$(platform)),-lws2_32 -static -static-libgcc -static-libstdc++,)
+
+run-server: server
+	$(serverTarget)
+
 # Clean up all relevant files
 clean:
 	$(RM) $(call platformpth, $(buildDir)/*)

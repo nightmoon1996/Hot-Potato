@@ -1,7 +1,7 @@
 #pragma once
 
 #include <vector>
-#include <raylib-cpp.hpp>
+#include "../shared/Geometry.h"
 #include <cmath>
 
 enum class ItemType {

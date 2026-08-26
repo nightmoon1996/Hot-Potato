@@ -2,8 +2,9 @@
 
 #include <string>
 #include <cstdint>
-#include <raylib-cpp.hpp>
+#include "../shared/Geometry.h"
 #include "Player.h"
+#include "../shared/ReliableChannel.h"
 
 static constexpr Vector2 kSlot0Spawn{ 150.0f, 300.0f };
 static constexpr Vector2 kSlot1Spawn{ 850.0f, 300.0f };
@@ -21,6 +22,8 @@ struct PlayerSlot {
     uint16_t clientPort = 0;
     double lastPacketAtSeconds = 0.0;
     Player player;
+    ReliableSender reliableSender;
+    ReliableReceiver reliableReceiver;
 
     PlayerSlot() : player(Vector2{0.0f, 0.0f}) {}
 };
