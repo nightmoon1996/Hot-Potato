@@ -45,6 +45,13 @@ inline Vector2 ComputeDashDestination(Vector2 currentPosition, Vector2 dashDirec
 // or not a dash fires, since it's what a stationary dash falls back to) — but ONLY for an
 // Alive player. Returns true iff a dash was actually applied; when it returns false the
 // player's position and dashCooldownTimer are left untouched.
+//
+// The dash's displacement is NOT applied instantly here: this only computes the destination
+// and hands it to Player::StartDash, which spreads the actual position change over
+// Player::kDashDuration via AdvanceDash, called once per tick from the tick loop. This keeps
+// the dash visually a fast slide rather than a teleport while staying server-authoritative
+// (the destination — and therefore the cooldown gate and catch-sweep math — is still decided
+// in one deterministic step, only the position's arrival there is spread out).
 inline bool TryApplyDash(Player& player, Vector2 moveInput, bool dashPressed, Rectangle courtBounds) {
     if (player.state != PlayerState::Alive) return false;
 
@@ -56,7 +63,8 @@ inline bool TryApplyDash(Player& player, Vector2 moveInput, bool dashPressed, Re
     if (!dashPressed || player.dashCooldownTimer > 0.0f) return false;
 
     Vector2 dashDir = ResolveDashDirection(moveInput, player.facingDirection);
-    player.position = ComputeDashDestination(player.position, dashDir, courtBounds);
+    Vector2 destination = ComputeDashDestination(player.position, dashDir, courtBounds);
+    player.StartDash(destination);
     player.dashCooldownTimer = kDashCooldown;
     return true;
 }
