@@ -25,7 +25,7 @@
 
 // Defined above main(); forward-declared here so the smoke tests can exercise it.
 static void SimulateSessionTick(Session& session, std::vector<WorldItem>& items, HazardZone& hazard,
-                                float* hazardCarry, bool* attack, bool* interact, float dt,
+                                float* hazardCarry, bool* attack, bool* interact, bool* usePressed, float dt,
                                 bool* activeOut, HotPotato& potato, float* chargeTimer,
                                 InputMsg* latestInputs, Rectangle courtBounds, MatchState& match,
                                 GameMode mode);
@@ -59,6 +59,7 @@ static const uint16_t kServerPort = 7777;
 static const float kMoveSpeed = 200.0f;
 static const float kPickupRadius = 24.0f;
 static const float kReviveRange = 32.0f;
+static constexpr int kSelfHealAmount = 30;
 
 static double NowSeconds() {
     return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -143,7 +144,7 @@ static void StartNewMatch(Session& session, MatchState& match, HotPotato& potato
 // tested directly (see SmokeTestSimulationTick). `active` is filled in for the caller,
 // which needs it to build the snapshot.
 static void SimulateSessionTick(Session& session, std::vector<WorldItem>& items, HazardZone& hazard,
-                                float* hazardCarry, bool* attack, bool* interact, float dt,
+                                float* hazardCarry, bool* attack, bool* interact, bool* usePressed, float dt,
                                 bool* activeOut, HotPotato& potato, float* chargeTimer,
                                 InputMsg* latestInputs, Rectangle courtBounds, MatchState& match,
                                 GameMode mode) {
@@ -154,6 +155,19 @@ static void SimulateSessionTick(Session& session, std::vector<WorldItem>& items,
     for (int i = 0; i < kMaxPlayersPerSession; i++) {
         active[i] = session.slots[i].state == SlotState::Connected;
         if (activeOut) activeOut[i] = active[i];
+    }
+
+    // Selected hotbar slot: clamp before storing, since SlotAt indexes a fixed-size array
+    // with no bounds checking of its own — a malformed/malicious client packet must never
+    // be allowed to set an out-of-range selectedSlot.
+    if (latestInputs) {
+        for (int i = 0; i < kMaxPlayersPerSession; i++) {
+            if (!active[i]) continue;
+            int sel = latestInputs[i].selectedSlot;
+            if (sel < 0) sel = 0;
+            if (sel >= Inventory::kCapacity) sel = Inventory::kCapacity - 1;
+            session.slots[i].player.selectedSlot = sel;
+        }
     }
 
     // Pickup: each active, Alive player who isn't currently a valid revive
@@ -370,10 +384,33 @@ static void SimulateSessionTick(Session& session, std::vector<WorldItem>& items,
             for (int j = 0; j < kMaxPlayersPerSession; j++) {
                 if (i == j || !active[j]) continue;
                 if (session.slots[j].player.state != PlayerState::Downed) continue;
-                UpdateRevive(session.slots[i].player, session.slots[j].player, interact[i], dt, kReviveRange);
+                bool potionSelected = session.slots[i].player.inventory.SlotAt(session.slots[i].player.selectedSlot).count > 0 &&
+                                      session.slots[i].player.inventory.SlotAt(session.slots[i].player.selectedSlot).type == ItemType::RevivePotion;
+                UpdateRevive(session.slots[i].player, session.slots[j].player, interact[i] && potionSelected, dt, kReviveRange);
                 if (session.slots[i].player.channelTimer > 0.0f) { channeling = true; break; }
             }
             if (!channeling) session.slots[i].player.channelTimer = 0.0f;
+        }
+    }
+
+    // Instant self-heal: fires once per FRESH press of use (usePressed is edge-triggered
+    // client-side, see InputMsg), only when the selected slot holds RevivePotion AND the
+    // player did NOT make revive-channel progress this tick (i.e., no one was revivable in
+    // range — if someone WAS revivable, the press should have gone toward the channel, not
+    // a self-heal; checking channelTimer > 0.0f after the revive loop tells us which case we
+    // are in, since UpdateRevive resets it to 0 whenever it made no progress against anyone
+    // this tick, per its own existing logic already exercised above).
+    for (int i = 0; i < kMaxPlayersPerSession; i++) {
+        if (!active[i]) continue;
+        Player& p = session.slots[i].player;
+        if (!usePressed || !usePressed[i]) continue;
+        if (p.state != PlayerState::Alive) continue;
+        if (p.channelTimer > 0.0f) continue; // was channeling a revive this tick instead
+        const InventorySlot& sel = p.inventory.SlotAt(p.selectedSlot);
+        if (sel.count > 0 && sel.type == ItemType::RevivePotion) {
+            if (p.inventory.Remove(ItemType::RevivePotion, 1)) {
+                p.TryHeal(kSelfHealAmount);
+            }
         }
     }
 
@@ -449,6 +486,7 @@ int main(int argc, char** argv) {
     std::map<std::string, uint32_t> sessionSnapshotSeq;
     std::map<std::string, bool[kMaxPlayersPerSession]> pendingAttack;
     std::map<std::string, bool[kMaxPlayersPerSession]> pendingInteract;
+    std::map<std::string, bool[kMaxPlayersPerSession]> pendingUse;
     std::map<std::string, HotPotato> sessionPotato;
     std::map<std::string, float[kMaxPlayersPerSession]> sessionChargeTimer;
     std::map<std::string, MatchState> sessionMatch;
@@ -599,6 +637,7 @@ int main(int argc, char** argv) {
                                 }
                                 pendingAttack[loc.sessionName][loc.slotIndex] = input.attackPressed;
                                 pendingInteract[loc.sessionName][loc.slotIndex] = input.interactHeld;
+                                pendingUse[loc.sessionName][loc.slotIndex] = input.usePressed;
                                 sessionLatestInput[loc.sessionName][loc.slotIndex] = input;
                             }
                         } else if (header.channel == 1 && type == MessageType::Ack) {
@@ -666,6 +705,7 @@ int main(int argc, char** argv) {
                 float* hazardCarry = sessionHazardCarry[sessionEntry];
                 bool* attack = pendingAttack.count(sessionEntry) ? pendingAttack[sessionEntry] : nullptr;
                 bool* interact = pendingInteract.count(sessionEntry) ? pendingInteract[sessionEntry] : nullptr;
+                bool* usePressed = pendingUse.count(sessionEntry) ? pendingUse[sessionEntry] : nullptr;
 
                 bool active[kMaxPlayersPerSession];
                 HotPotato& potato = sessionPotato[sessionEntry];
@@ -674,7 +714,7 @@ int main(int argc, char** argv) {
                 if (!latestInputs) continue; // session exists but no input map yet (shouldn't happen once creation-time init runs, but guards a null deref)
                 MatchState& match = sessionMatch[sessionEntry];
                 GameMode mode = sessionGameMode.count(sessionEntry) ? sessionGameMode[sessionEntry] : GameMode::FFA;
-                SimulateSessionTick(*session, items, hazard, hazardCarry, attack, interact, dt, active, potato, chargeTimer, latestInputs, courtBounds, match, mode);
+                SimulateSessionTick(*session, items, hazard, hazardCarry, attack, interact, usePressed, dt, active, potato, chargeTimer, latestInputs, courtBounds, match, mode);
 
                 // state value 3 = "absent" (slot not Connected): not a real PlayerState,
                 // repurposed on the wire so an inactive slot renders as not-present
@@ -685,7 +725,12 @@ int main(int argc, char** argv) {
                 SnapshotMsg snap{};
                 for (int i = 0; i < kMaxPlayersPerSession; i++) {
                     Player& p = session->slots[i].player;
-                    snap.players[i] = PlayerSnapshot{ p.position.x, p.position.y, p.hp, active[i] ? (uint8_t)p.state : kSnapshotStateAbsent, p.inventory.Count(ItemType::RevivePotion), p.channelTimer };
+                    PlayerSnapshot ps{ p.position.x, p.position.y, p.hp, active[i] ? (uint8_t)p.state : kSnapshotStateAbsent, {}, p.channelTimer };
+                    for (int s = 0; s < Inventory::kCapacity; s++) {
+                        const InventorySlot& slot = p.inventory.SlotAt(s);
+                        ps.slots[s] = HotbarSlotSnapshot{ (uint8_t)slot.type, slot.count };
+                    }
+                    snap.players[i] = ps;
                 }
                 for (int i = 0; i < 2 && i < (int)items.size(); i++) {
                     snap.items[i] = WorldItemSnapshot{ items[i].position.x, items[i].position.y, items[i].active };

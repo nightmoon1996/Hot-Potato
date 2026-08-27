@@ -36,6 +36,7 @@ public:
     Vector2 facingDirection; // last non-zero movement direction; used as the dash direction
                              // when the player isn't currently pressing a movement key
     Inventory inventory;
+    int selectedSlot = 0; // clamped 0..(Inventory::kCapacity-1); updated from InputMsg::selectedSlot each tick
 
     // Dash-in-progress state: while dashElapsed < kDashDuration, position is being
     // interpolated from dashStartPos to dashTargetPos tick-by-tick (see AdvanceDash) instead
@@ -94,6 +95,14 @@ public:
             state = PlayerState::Downed;
             downedTimer = kDownedDuration;
         }
+    }
+
+    // Instant self-heal. Only an Alive player can be healed — silently no-ops otherwise,
+    // mirroring TakeDamage's own "only Alive players are affected" gating pattern.
+    void TryHeal(int amount) {
+        if (state != PlayerState::Alive) return;
+        hp += amount;
+        if (hp > kMaxHp) hp = kMaxHp;
     }
 
     void Kill() {
