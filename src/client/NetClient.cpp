@@ -101,10 +101,10 @@ bool NetClient::AttemptConnect(uint32_t reconnectToken) {
 }
 
 void NetClient::SendInput(float moveX, float moveY, bool interactHeld, bool attackPressed,
-                           bool chargingThrow, bool releaseThrow, float aimDirX, float aimDirY, bool dashPressed) {
+                           bool chargingThrow, bool releaseThrow, float aimDirX, float aimDirY, bool dashPressed, int selectedSlot, bool usePressed) {
     if (!connected) return;
 
-    InputMsg input{ moveX, moveY, interactHeld, attackPressed, chargingThrow, releaseThrow, aimDirX, aimDirY, dashPressed };
+    InputMsg input{ moveX, moveY, interactHeld, attackPressed, chargingThrow, releaseThrow, aimDirX, aimDirY, dashPressed, selectedSlot, usePressed };
     std::vector<uint8_t> inputBytes;
     SerializeStruct(input, inputBytes);
     std::vector<uint8_t> full;
