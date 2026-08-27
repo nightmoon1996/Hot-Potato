@@ -377,6 +377,13 @@ static void SimulateSessionTick(Session& session, std::vector<WorldItem>& items,
     // prevents that; the explicit reset below preserves the original "no valid target
     // resets the timer" behavior, which is UpdateRevive's only observable effect when
     // canProgress is false.
+    //
+    // revivedThisTick[i] records whether UpdateRevive returned true for reviver i this
+    // tick — i.e. the channel actually COMPLETED. This matters because UpdateRevive zeroes
+    // channelTimer on BOTH of its exits ("no progress possible" and "revive completed"), so
+    // channelTimer == 0.0f alone cannot tell those two cases apart. The self-heal loop below
+    // needs that distinction; the return value is the only thing that carries it.
+    bool revivedThisTick[kMaxPlayersPerSession] = {};
     if (interact) {
         for (int i = 0; i < kMaxPlayersPerSession; i++) {
             if (!active[i]) continue;
@@ -386,10 +393,16 @@ static void SimulateSessionTick(Session& session, std::vector<WorldItem>& items,
                 if (session.slots[j].player.state != PlayerState::Downed) continue;
                 bool potionSelected = session.slots[i].player.inventory.SlotAt(session.slots[i].player.selectedSlot).count > 0 &&
                                       session.slots[i].player.inventory.SlotAt(session.slots[i].player.selectedSlot).type == ItemType::RevivePotion;
-                UpdateRevive(session.slots[i].player, session.slots[j].player, interact[i] && potionSelected, dt, kReviveRange);
+                if (UpdateRevive(session.slots[i].player, session.slots[j].player, interact[i] && potionSelected, dt, kReviveRange)) {
+                    revivedThisTick[i] = true;
+                    // The revive completed, which consumed the channel: stop scanning further
+                    // targets for this reviver so a later non-valid target's canProgress==false
+                    // path can't clobber state for a channel that already resolved.
+                    break;
+                }
                 if (session.slots[i].player.channelTimer > 0.0f) { channeling = true; break; }
             }
-            if (!channeling) session.slots[i].player.channelTimer = 0.0f;
+            if (!channeling && !revivedThisTick[i]) session.slots[i].player.channelTimer = 0.0f;
         }
     }
 
@@ -399,13 +412,23 @@ static void SimulateSessionTick(Session& session, std::vector<WorldItem>& items,
     // range — if someone WAS revivable, the press should have gone toward the channel, not
     // a self-heal; checking channelTimer > 0.0f after the revive loop tells us which case we
     // are in, since UpdateRevive resets it to 0 whenever it made no progress against anyone
-    // this tick, per its own existing logic already exercised above).
+    // this tick, per its own existing logic already exercised above) — EXCEPT for the tick a
+    // revive actually completes, which also leaves channelTimer at 0; revivedThisTick[i]
+    // covers that case, so one E-press can't pay for both a completed revive and a self-heal.
+    //
+    // usePressed[] is the server's latch of the last-received InputMsg's edge-triggered flag.
+    // It is DRAINED here (set back to false) the moment it is observed true, so a single
+    // physical press fires at most one self-heal even when several server ticks elapse before
+    // the next input packet arrives (routine under unreliable UDP + framerate drift). Without
+    // the drain, one press would re-fire every tick until a fresh packet overwrote the latch.
     for (int i = 0; i < kMaxPlayersPerSession; i++) {
+        if (!usePressed || !usePressed[i]) continue;
+        usePressed[i] = false; // consume the edge: one press, one chance to act
         if (!active[i]) continue;
         Player& p = session.slots[i].player;
-        if (!usePressed || !usePressed[i]) continue;
         if (p.state != PlayerState::Alive) continue;
         if (p.channelTimer > 0.0f) continue; // was channeling a revive this tick instead
+        if (revivedThisTick[i]) continue;    // a revive completed this tick; press is spent
         const InventorySlot& sel = p.inventory.SlotAt(p.selectedSlot);
         if (sel.count > 0 && sel.type == ItemType::RevivePotion) {
             if (p.inventory.Remove(ItemType::RevivePotion, 1)) {

@@ -1676,6 +1676,120 @@ void SmokeTestHotbarAndSelfHeal() {
     }
 }
 
+// Regression tests for the two Critical findings in the hotbar/self-heal final review.
+void SmokeTestUseFlagLatchingAndReviveOverlap() {
+    // (a) Finding 1: the server latches the last-received InputMsg's edge-triggered
+    // usePressed flag. Under UDP loss / framerate drift several server ticks can elapse
+    // before a fresh packet overwrites that latch. A single physical E press must consume
+    // exactly ONE potion, not one per tick the stale `true` is still sitting in the latch.
+    {
+        Session session;
+        session.slots[0].state = SlotState::Connected;
+        session.slots[0].player = Player(kSpawnPoints[0]);
+        session.slots[0].player.hp = 10;
+        session.slots[0].player.selectedSlot = 0;
+        for (int n = 0; n < 4; n++) session.slots[0].player.inventory.Add(ItemType::RevivePotion);
+        assert(session.slots[0].player.inventory.Count(ItemType::RevivePotion) == 4);
+        // Second player present, Alive and far away: nothing revivable, so self-heal is the
+        // only path usePressed can take.
+        session.slots[1].state = SlotState::Connected;
+        session.slots[1].player = Player(Vector2{900.0f, 500.0f});
+
+        HazardZone hazard{ Rectangle{ 5000.0f, 5000.0f, 10.0f, 10.0f } };
+        std::vector<WorldItem> items;
+        Rectangle courtBounds{ 0.0f, 0.0f, 1000.0f, 600.0f };
+        float hazardCarry[kMaxPlayersPerSession] = {};
+        bool attack[kMaxPlayersPerSession] = {};
+        bool interact[kMaxPlayersPerSession] = {};
+        // ONE press latched by the server; no further packets arrive for the next 4 ticks.
+        bool usePressed[kMaxPlayersPerSession] = { true, false, false, false };
+        float chargeTimer[kMaxPlayersPerSession] = {};
+        InputMsg latestInputs[kMaxPlayersPerSession] = {};
+        MatchState match{};
+        HotPotato potato{};
+        bool active[kMaxPlayersPerSession];
+
+        for (int tick = 0; tick < 4; tick++) {
+            SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, usePressed,
+                                 1.0f / 60.0f, active, potato, chargeTimer, latestInputs, courtBounds,
+                                 match, GameMode::RevivePotionTest);
+        }
+
+        // Exactly one heal off one press: 4 -> 3 potions, 10 -> 40 hp. Before the fix this
+        // drained all 4 potions and healed 4 times.
+        assert(session.slots[0].player.inventory.Count(ItemType::RevivePotion) == 3);
+        assert(session.slots[0].player.hp == 40);
+        // The latch itself must have been drained so a later tick can't see the stale press.
+        assert(usePressed[0] == false);
+
+        // A genuinely fresh packet re-arming the flag heals exactly once more.
+        usePressed[0] = true;
+        SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, usePressed,
+                             1.0f / 60.0f, active, potato, chargeTimer, latestInputs, courtBounds,
+                             match, GameMode::RevivePotionTest);
+        assert(session.slots[0].player.inventory.Count(ItemType::RevivePotion) == 2);
+        assert(session.slots[0].player.hp == 70);
+    }
+
+    // (b) Finding 2: UpdateRevive zeroes channelTimer on BOTH "no progress possible" and
+    // "revive just completed", so the self-heal loop's `channelTimer > 0.0f` guard cannot
+    // tell them apart. If usePressed happens to be true on the exact tick a revive channel
+    // completes, the reviver used to ALSO self-heal — spending a second potion and healing
+    // themselves off the single E press that was supposed to only revive the teammate.
+    {
+        Session session;
+        session.slots[0].state = SlotState::Connected;
+        session.slots[0].player = Player(Vector2{0.0f, 0.0f});
+        session.slots[0].player.hp = 50;
+        session.slots[0].player.selectedSlot = 0;
+        session.slots[0].player.inventory.Add(ItemType::RevivePotion);
+        session.slots[0].player.inventory.Add(ItemType::RevivePotion); // 2 potions
+
+        session.slots[1].state = SlotState::Connected;
+        session.slots[1].player = Player(Vector2{5.0f, 0.0f}); // within kReviveRange
+        session.slots[1].player.ForceDown();
+
+        HazardZone hazard{ Rectangle{ 5000.0f, 5000.0f, 10.0f, 10.0f } };
+        std::vector<WorldItem> items;
+        Rectangle courtBounds{ 0.0f, 0.0f, 1000.0f, 600.0f };
+        float hazardCarry[kMaxPlayersPerSession] = {};
+        bool attack[kMaxPlayersPerSession] = {};
+        bool interact[kMaxPlayersPerSession] = { true, false, false, false }; // E held
+        bool usePressed[kMaxPlayersPerSession] = {};
+        float chargeTimer[kMaxPlayersPerSession] = {};
+        InputMsg latestInputs[kMaxPlayersPerSession] = {};
+        MatchState match{};
+        HotPotato potato{};
+        bool active[kMaxPlayersPerSession];
+
+        const float dt = 1.0f / 60.0f;
+        // Channel until exactly one tick short of completion.
+        int guard = 0;
+        while (session.slots[0].player.channelTimer + dt < Player::kChannelDuration) {
+            SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, usePressed,
+                                 dt, active, potato, chargeTimer, latestInputs, courtBounds,
+                                 match, GameMode::RevivePotionTest);
+            assert(++guard < 1000);
+        }
+        assert(session.slots[1].player.state == PlayerState::Downed); // not yet revived
+        assert(session.slots[0].player.inventory.Count(ItemType::RevivePotion) == 2);
+
+        // The completing tick, with usePressed ALSO true (a fresh press landing on the very
+        // tick the channel finishes).
+        usePressed[0] = true;
+        SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, usePressed,
+                             dt, active, potato, chargeTimer, latestInputs, courtBounds,
+                             match, GameMode::RevivePotionTest);
+
+        assert(session.slots[1].player.state != PlayerState::Downed); // revive completed
+        // Only the revive's own consumption: 2 -> 1, NOT 2 -> 0.
+        assert(session.slots[0].player.inventory.Count(ItemType::RevivePotion) == 1);
+        // The reviver heals nobody but the target: own HP unchanged at 50, not 80.
+        assert(session.slots[0].player.hp == 50);
+        assert(session.slots[0].player.channelTimer == 0.0f);
+    }
+}
+
 void RunAllSmokeTests() {
     SmokeTestSerialization();
     std::printf("SmokeTestSerialization passed\n");
@@ -1730,6 +1844,9 @@ void RunAllSmokeTests() {
 
     SmokeTestHotbarAndSelfHeal();
     std::printf("SmokeTestHotbarAndSelfHeal passed\n");
+
+    SmokeTestUseFlagLatchingAndReviveOverlap();
+    std::printf("SmokeTestUseFlagLatchingAndReviveOverlap passed\n");
 
     std::printf("All smoke tests passed\n");
 }
