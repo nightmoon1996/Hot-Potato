@@ -100,6 +100,16 @@ struct InputMsg {
     float aimDirX;
     float aimDirY;
     bool dashPressed;
+    int selectedSlot;  // currently-selected hotbar index, 0..3 (set by keys 1-4 client-side)
+    bool usePressed;   // edge-triggered "use" — true only on the tick E was FRESHLY pressed,
+                       // mirroring attackPressed's IsKeyPressed-based one-shot semantics, NOT
+                       // interactHeld's held/repeating semantics. Drives instant self-heal;
+                       // never drives the (still interactHeld-gated) pickup or revive-channel.
+};
+
+struct HotbarSlotSnapshot {
+    uint8_t itemType; // meaningless when count == 0 (empty slot)
+    int count;
 };
 
 struct PlayerSnapshot {
@@ -107,7 +117,7 @@ struct PlayerSnapshot {
     float posY;
     int hp;
     uint8_t state; // 0 = Alive, 1 = Downed, 2 = Dead
-    int potionCount;
+    HotbarSlotSnapshot slots[4]; // fixed 4-slot hotbar contents, index-for-index with Inventory
     float channelTimer;
 };
 
