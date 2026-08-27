@@ -9,7 +9,7 @@ inline void RunJuiceSmokeTests() {
     {
         ClientEffectsState state;
         SnapshotMsg snap{};
-        snap.players[0] = PlayerSnapshot{ 100, 100, 100, kSnapshotStateAlive, 0, 0.0f };
+        snap.players[0] = PlayerSnapshot{ 100, 100, 100, kSnapshotStateAlive, {}, 0.0f };
         snap.players[1].state = kSnapshotStateAbsent;
         snap.items[0].active = false;
         snap.items[1].active = false;
@@ -54,7 +54,7 @@ inline void RunJuiceSmokeTests() {
     {
         ClientEffectsState state;
         SnapshotMsg snap{};
-        snap.players[0] = PlayerSnapshot{ 50, 50, 50, kSnapshotStateDowned, 0, 0.0f };
+        snap.players[0] = PlayerSnapshot{ 50, 50, 50, kSnapshotStateDowned, {}, 0.0f };
         snap.players[1].state = kSnapshotStateAbsent;
         state.Update(snap, 1, 0.016f);
 
@@ -100,7 +100,7 @@ inline void RunJuiceSmokeTests() {
     {
         ClientEffectsState state;
         SnapshotMsg snap{};
-        snap.players[0] = PlayerSnapshot{ 0, 0, 100, kSnapshotStateAlive, 0, 0.0f };
+        snap.players[0] = PlayerSnapshot{ 0, 0, 100, kSnapshotStateAlive, {}, 0.0f };
         snap.players[1].state = kSnapshotStateAbsent;
         state.Update(snap, 1, 0.016f);
 
@@ -120,7 +120,7 @@ inline void RunJuiceSmokeTests() {
     {
         ClientEffectsState state;
         SnapshotMsg snap{};
-        snap.players[0] = PlayerSnapshot{ 0, 0, 100, kSnapshotStateAlive, 0, 0.0f };
+        snap.players[0] = PlayerSnapshot{ 0, 0, 100, kSnapshotStateAlive, {}, 0.0f };
         snap.players[1].state = kSnapshotStateAbsent;
         state.Update(snap, 0, 0.016f);
 
@@ -151,7 +151,7 @@ inline void RunJuiceSmokeTests() {
     {
         ClientEffectsState state;
         SnapshotMsg snap{};
-        snap.players[0] = PlayerSnapshot{ 0, 0, 100, kSnapshotStateAlive, 0, 0.0f };
+        snap.players[0] = PlayerSnapshot{ 0, 0, 100, kSnapshotStateAlive, {}, 0.0f };
         snap.players[1].state = kSnapshotStateAbsent;
         state.Update(snap, 1, 0.016f);
 
@@ -176,14 +176,14 @@ inline void RunJuiceSmokeTests() {
     {
         ClientEffectsState state;
         SnapshotMsg snap{};
-        snap.players[0] = PlayerSnapshot{ 0, 0, 100, kSnapshotStateAlive, 0, 0.0f };
+        snap.players[0] = PlayerSnapshot{ 0, 0, 100, kSnapshotStateAlive, {}, 0.0f };
         snap.players[1].state = kSnapshotStateAbsent;
         state.Update(snap, 1, 0.016f); // player 0 present, alive, hp=100
 
         snap.players[0].state = kSnapshotStateAbsent;
         state.Update(snap, 1, 0.016f); // player 0 goes absent
 
-        snap.players[0] = PlayerSnapshot{ 0, 0, 40, kSnapshotStateAlive, 0, 0.0f };
+        snap.players[0] = PlayerSnapshot{ 0, 0, 40, kSnapshotStateAlive, {}, 0.0f };
         state.Update(snap, 1, 0.016f); // player 0 reappears at hp=40
 
         int activeDamageNumbers = 0;

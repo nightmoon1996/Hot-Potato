@@ -42,7 +42,6 @@ void ClientEffectsState::Update(const SnapshotMsg& snap, uint8_t mySlot, float d
 
         prevHp[i] = p.hp;
         prevState[i] = p.state;
-        prevPotionCount[i] = p.potionCount;
     }
 
     for (int j = 0; j < 2; j++) {

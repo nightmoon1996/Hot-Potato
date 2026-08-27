@@ -10,6 +10,7 @@
 #include "RoomMenu.h"
 #include "AimDirection.h"
 #include "AimDirectionTests.h"
+#include "Hotbar.h"
 
 int main(int argc, char** argv)
 {
@@ -156,8 +157,6 @@ int main(int argc, char** argv)
             if (hpWidth < 0) hpWidth = 0;
             DrawRectangle((int)pos.x - barWidth / 2, (int)pos.y - 26, hpWidth, 5, GREEN);
 
-            DrawText(TextFormat("Potions: %d", p.potionCount), (int)pos.x - 30, (int)pos.y + 20, 12, DARKBLUE);
-
             if (p.channelTimer > 0.0f) {
                 float ratio = p.channelTimer / constants.channelDuration;
                 int filledDots = (int)(kReviveRingDotCount * ratio);
@@ -237,6 +236,10 @@ int main(int argc, char** argv)
         }
 
         EndMode2D();
+
+        if (netClient.HasReceivedSnapshot() && mySlot < kMaxPlayersPerSession) {
+            DrawHotbar(snap.players[mySlot], selectedSlot, screenWidth, screenHeight);
+        }
 
         DrawText(TextFormat("Room: %s | Connected", netClient.GetRoomCode()), 10, 10, 16, BLACK);
         DrawText(TextFormat("You are slot %d. WASD move, E pickup/revive, Mouse: hold to charge throw, release to throw.", (int)mySlot), 10, 30, 16, BLACK);

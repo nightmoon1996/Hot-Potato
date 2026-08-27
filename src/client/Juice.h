@@ -59,7 +59,6 @@ private:
     // Diff caches (previous frame's values)
     int prevHp[kMaxPlayersPerSession] = {0, 0, 0, 0};
     uint8_t prevState[kMaxPlayersPerSession] = {kSnapshotStateAbsent, kSnapshotStateAbsent, kSnapshotStateAbsent, kSnapshotStateAbsent};
-    int prevPotionCount[kMaxPlayersPerSession] = {0, 0, 0, 0};
     // Intentionally 2, not kMaxPlayersPerSession: these mirror SnapshotMsg::items, whose
     // size is unrelated to player count (a later phase reworks item spawning).
     bool prevItemActive[2] = {false, false};
