@@ -174,6 +174,13 @@ static void SimulateSessionTick(Session& session, std::vector<WorldItem>& items,
     // channel target for anyone else may pick up an item. (A player who could
     // instead be revived should channel-revive, not pick up items, mirroring
     // the original 2-player behavior's "!canRevive" gate.)
+    //
+    // pickedUpThisTick[i] records whether player i's press just picked something up. This
+    // matters because interactHeld (which drives pickup) and usePressed (which drives the
+    // self-heal loop below) both fire from the same physical E key on the client — without
+    // this flag, picking up a potion while below full HP would immediately self-heal it away
+    // on the very same press, so the item would never actually land in the hotbar.
+    bool pickedUpThisTick[kMaxPlayersPerSession] = {};
     if (interact) {
         for (int i = 0; i < kMaxPlayersPerSession; i++) {
             if (!active[i] || session.slots[i].player.state != PlayerState::Alive || !interact[i]) continue;
@@ -187,7 +194,12 @@ static void SimulateSessionTick(Session& session, std::vector<WorldItem>& items,
                 }
             }
             if (isRevivable) continue;
-            for (auto& item : items) { if (TryPickup(item, session.slots[i].player.position, session.slots[i].player.inventory, kPickupRadius)) break; }
+            for (auto& item : items) {
+                if (TryPickup(item, session.slots[i].player.position, session.slots[i].player.inventory, kPickupRadius)) {
+                    pickedUpThisTick[i] = true;
+                    break;
+                }
+            }
         }
     }
 
@@ -429,6 +441,7 @@ static void SimulateSessionTick(Session& session, std::vector<WorldItem>& items,
         if (p.state != PlayerState::Alive) continue;
         if (p.channelTimer > 0.0f) continue; // was channeling a revive this tick instead
         if (revivedThisTick[i]) continue;    // a revive completed this tick; press is spent
+        if (pickedUpThisTick[i]) continue;   // this press just picked up an item; don't also spend it on a heal
         const InventorySlot& sel = p.inventory.SlotAt(p.selectedSlot);
         if (sel.count > 0 && sel.type == ItemType::RevivePotion) {
             if (p.inventory.Remove(ItemType::RevivePotion, 1)) {

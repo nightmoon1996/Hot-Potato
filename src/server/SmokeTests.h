@@ -1676,6 +1676,51 @@ void SmokeTestHotbarAndSelfHeal() {
     }
 }
 
+// Regression test: picking up a potion while below full HP must NOT immediately self-heal it
+// away on the same press. interactHeld (pickup) and usePressed (self-heal) both fire off the
+// SAME physical E key client-side, so a player who is below full HP, standing over a world
+// item, with the potion slot selected, and presses E once (interact[i]=true, usePressed[i]=true
+// in the same InputMsg/tick) must end the tick still holding the potion they just picked up —
+// the same press must not also spend it on an instant self-heal.
+void SmokeTestPickupDoesNotTriggerSelfHealSameTick() {
+    Session session;
+    session.slots[0].state = SlotState::Connected;
+    session.slots[0].player = Player(Vector2{100.0f, 100.0f});
+    session.slots[0].player.hp = 50; // below full HP, so self-heal WOULD be eligible if it fired
+    session.slots[0].player.selectedSlot = 0; // the slot the picked-up potion will land in
+
+    HazardZone hazard{ Rectangle{ 5000.0f, 5000.0f, 10.0f, 10.0f } };
+    std::vector<WorldItem> items = { WorldItem{ Vector2{100.0f, 100.0f}, ItemType::RevivePotion, true } };
+    Rectangle courtBounds{ 0.0f, 0.0f, 1000.0f, 600.0f };
+    float hazardCarry[kMaxPlayersPerSession] = {};
+    bool attack[kMaxPlayersPerSession] = {};
+    bool interact[kMaxPlayersPerSession] = { true, false, false, false }; // holding E: drives pickup
+    bool usePressed[kMaxPlayersPerSession] = { true, false, false, false }; // fresh E press: drives self-heal
+    float chargeTimer[kMaxPlayersPerSession] = {};
+    InputMsg latestInputs[kMaxPlayersPerSession] = {};
+    MatchState match{};
+    HotPotato potato{};
+    bool active[kMaxPlayersPerSession];
+
+    SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact, usePressed,
+                         1.0f / 60.0f, active, potato, chargeTimer, latestInputs, courtBounds,
+                         match, GameMode::RevivePotionTest);
+
+    assert(items[0].active == false); // picked up
+    assert(session.slots[0].player.inventory.Count(ItemType::RevivePotion) == 1); // still held, not self-healed away
+    assert(session.slots[0].player.hp == 50); // unchanged — no self-heal occurred this tick
+
+    // A SUBSEQUENT press (a new tick, fresh usePressed) with nothing left to pick up must
+    // still self-heal normally — this bug's fix must not have disabled self-heal outright.
+    bool usePressed2[kMaxPlayersPerSession] = { true, false, false, false };
+    bool interact2[kMaxPlayersPerSession] = {}; // not held this time, nothing to pick up anyway
+    SimulateSessionTick(session, items, hazard, hazardCarry, attack, interact2, usePressed2,
+                         1.0f / 60.0f, active, potato, chargeTimer, latestInputs, courtBounds,
+                         match, GameMode::RevivePotionTest);
+    assert(session.slots[0].player.hp == 80); // 50 + 30 self-heal, now that it's a separate press
+    assert(session.slots[0].player.inventory.Count(ItemType::RevivePotion) == 0); // consumed by the heal
+}
+
 // Regression tests for the two Critical findings in the hotbar/self-heal final review.
 void SmokeTestUseFlagLatchingAndReviveOverlap() {
     // (a) Finding 1: the server latches the last-received InputMsg's edge-triggered
@@ -1844,6 +1889,9 @@ void RunAllSmokeTests() {
 
     SmokeTestHotbarAndSelfHeal();
     std::printf("SmokeTestHotbarAndSelfHeal passed\n");
+
+    SmokeTestPickupDoesNotTriggerSelfHealSameTick();
+    std::printf("SmokeTestPickupDoesNotTriggerSelfHealSameTick passed\n");
 
     SmokeTestUseFlagLatchingAndReviveOverlap();
     std::printf("SmokeTestUseFlagLatchingAndReviveOverlap passed\n");
