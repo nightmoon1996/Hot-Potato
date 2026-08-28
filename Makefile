@@ -11,11 +11,6 @@ platformpth = $(subst /,$(PATHSEP),$1)
 
 # Set global macros
 buildDir := bin
-executable := app
-target := $(buildDir)/$(executable)
-sources := $(call rwildcard,src/,*.cpp)
-objects := $(patsubst src/%, $(buildDir)/%, $(patsubst %.cpp, %.o, $(sources)))
-depends := $(patsubst %.o, %.d, $(objects))
 compileFlags := -std=c++17 -I include
 linkFlags = -L lib/$(platform) -l raylib
 
@@ -24,7 +19,7 @@ ifeq ($(OS), Windows_NT)
 	# Set Windows macros
 	platform := Windows
 	CXX ?= g++
-	linkFlags += -Wl,--allow-multiple-definition -pthread -lopengl32 -lgdi32 -lwinmm -static -static-libgcc -static-libstdc++
+	linkFlags += -Wl,--allow-multiple-definition -pthread -lopengl32 -lgdi32 -lwinmm -lws2_32 -static -static-libgcc -static-libstdc++
 	THEN := &&
 	PATHSEP := \$(BLANK)
 	MKDIR := -mkdir -p
@@ -55,10 +50,10 @@ else
 endif
 
 # Lists phony targets for Makefile
-.PHONY: all setup submodules execute clean
+.PHONY: all setup submodules clean
 
-# Default target, compiles, executes and cleans
-all: $(target) execute clean
+# Default target, builds both server and client
+all: server client
 
 # Sets up the project for compiling, generates includes and libs
 setup: include lib
@@ -81,21 +76,43 @@ lib: submodules
 	$(MKDIR) $(call platformpth, lib/$(platform))
 	$(call COPY,vendor/raylib/src,lib/$(platform),libraylib.a)
 
-# Link the program and create the executable
-$(target): $(objects)
-	$(CXX) $(objects) -o $(target) $(linkFlags)
-
-# Add all rules from dependency files
--include $(depends)
-
 # Compile objects to the build directory
 $(buildDir)/%.o: src/%.cpp Makefile
 	$(MKDIR) $(call platformpth, $(@D))
 	$(CXX) -MMD -MP -c $(compileFlags) $< -o $@ $(CXXFLAGS)
 
-# Run the executable
-execute: $(target)
-	$(target) $(ARGS)
+serverSources := $(call rwildcard,src/shared/,*.cpp) $(call rwildcard,src/server/,*.cpp)
+serverObjects := $(patsubst src/%, $(buildDir)/%, $(patsubst %.cpp, %.o, $(serverSources)))
+serverTarget := $(buildDir)/server$(if $(filter Windows,$(platform)),.exe,)
+
+.PHONY: server run-server
+
+server: $(serverTarget)
+
+$(serverTarget): $(serverObjects)
+	$(CXX) $(serverObjects) -o $(serverTarget) $(if $(filter Windows,$(platform)),-lws2_32 -static -static-libgcc -static-libstdc++,)
+
+run-server: server
+	$(serverTarget)
+
+clientSources := $(call rwildcard,src/shared/,*.cpp) $(call rwildcard,src/client/,*.cpp)
+clientObjects := $(patsubst src/%, $(buildDir)/%, $(patsubst %.cpp, %.o, $(clientSources)))
+clientTarget := $(buildDir)/client$(if $(filter Windows,$(platform)),.exe,)
+
+.PHONY: client run-client
+
+client: $(clientTarget)
+
+$(clientTarget): $(clientObjects)
+	$(CXX) $(clientObjects) -o $(clientTarget) $(linkFlags)
+
+run-client: client
+	$(clientTarget) $(ARGS)
+
+depends := $(patsubst %.o, %.d, $(serverObjects) $(clientObjects))
+
+# Add all rules from dependency files
+-include $(depends)
 
 # Clean up all relevant files
 clean:
