@@ -1,148 +1,147 @@
-# Raylib C++ Starter
-The Raylib C++ Starter kit is a template project that provides a simple starter template for the [raylib](https://github.com/raysan5/raylib) game tools library incorporating the [raylib-cpp](https://github.com/robloach/raylib-cpp) C++ bindings and using [Make](https://www.gnu.org/software/make/) for building. The starter kit can automatcially clone down raylib and the bindings, compile them, and setup the project for separate compilation using a static library.
+# Hot Potato
 
-> Why static linking?
+A small server-authoritative multiplayer party game built with [raylib](https://github.com/raysan5/raylib) / [raylib-cpp](https://github.com/robloach/raylib-cpp) in C++17. Up to 4 players connect over UDP to a dedicated server and play **Hot Potato**: charge and throw an object, catch it off your teammates, and don't be the one holding it when the timer runs out.
 
-One of the most absurdly annoying things about C++ development is finding and linking dynamic libraries. The raylib project prides itself on having **"NO external dependencies"**, and we tend to agree that portability is way cooler than saving that fraction of a second on compile-time.
+## Contents
 
-> Why not just use CMake?
+- [Building](#building)
+- [Running](#running)
+- [Game modes](#game-modes)
+- [Controls](#controls)
+- [Gameplay features](#gameplay-features)
+- [Project structure](#project-structure)
+- [Tests](#tests)
+- [Design docs](#design-docs)
 
-I guess we just don't want the added headache. CMake is complex and sometimes feels like some *arcane magic* that we generally take for granted in build systems. If you look at the raylib library, yes it has CMake support, but it generally encourages the use of Make on all platforms because as the library reads:
+## Building
 
-> raylib is a programming library to enjoy videogames programming; no fancy interface, no visual helpers, no auto-debugging... just coding in the most pure spartan-programmers way
+### Dependencies
 
-So that being said, we hope that this repository finds you well and wholeheartedly enjoying the *simple things in life* (i.e. video games programming).
+Install platform build tools first — see [docs/InstallingDependencies.md](docs/InstallingDependencies.md) (MinGW/G++ on Windows, G++ on Linux, Clang++ on macOS).
 
-### Current Compatibility
-| OS          | Default Compiler |  Last Manual Build  |                   Compile Status                     |
-| ----------- | ---------------- | ------------------- | ---------------------------------------------------- |
-| **macOS**   | Clang++          | `Big Sur 11.0.1`    | ![macOS Status](../../workflows/macOS/badge.svg)     |
-| **Linux**   | G++              | `Ubuntu 20.04 LTS`  | ![Linux Status](../../workflows/Ubuntu/badge.svg)    |
-| **Windows** | MinGW (G++)      | `Windows 10 19041`  | ![Windows Status](../../workflows/Windows/badge.svg) |
+### First-time setup
 
-## Getting Started
+Pulls in `raylib`/`raylib-cpp` as submodules, builds raylib as a static library, and copies headers into `include/`. Only needs to run once (or after updating the vendored submodules).
 
-### Installing Dependencies
-
-Before building the project, you will need to install all relevant dependencies for your platform so that the project has access to all the tools required, and raylib can compile and link correctly. You can find intructions for installing dependencies on macOS, Linux, and Windows in the [docs file on installing dependencies](docs/InstallingDependencies.md).
-
-### Building the Project
-Once you have cloned this repository and installed dependencies, building the project is as simple as running these two commands in its root directory:
-
-#### macOS & Linux
-```console
-$ make setup
-$ make
-```
-
-#### Windows
+**Windows**
 ```console
 > mingw32-make setup
+```
+
+**macOS / Linux**
+```console
+$ make setup
+```
+
+### Build the server and client
+
+The project builds two separate executables from a shared codebase: `server` (no raylib dependency — pure networking/simulation) and `client` (the raylib-cpp game window).
+
+**Windows**
+```console
+> mingw32-make server
+> mingw32-make client
+```
+or build both at once:
+```console
 > mingw32-make
 ```
 
-The first command will clone in the lastest C++ bindings and targeted version of raylib, copy across any relevant header files into `/includes`, and build a static library file from them, placing it in `/lib`. The second command then compiles, runs and cleans up your project using the source code in `/src/main.cpp`.
-
-*If a window pops up, congratulations, you've successfully built the project and you can now start programming your game!*
-
-## Using This Template
-Now that you have the project setup and compiling on your system, it's time to start programming! If you aren't already familliar with [raylib](https://github.com/raysan5/raylib), we recommend looking over [this awesome cheatsheet](https://www.raylib.com/cheatsheet/cheatsheet.html) which lists every function, struct and macro available in the raylib C library. If you want specifics on how to use the C++ bindings, then you should check out the [raylib-cpp](https://github.com/robloach/raylib-cpp) repo, which nicely explains how the bindings work and contains [raylib's examples ported to C++](https://github.com/RobLoach/raylib-cpp/tree/master/examples).
-
-Once you're up and running, we first of all recommend that all your code for the game should go into the `/src` directory, which is automatically included in the compile process when you run Make. The default entry point for the program is `/src/main.cpp` (which is pretty standard). If you wish to change the program entry point, add more libraries, or really anything about your project, all build instructions are specified in the [`Makefile`](Makefile) - no smoke and mirrors!
-
-### Making Use of Separate Compilation
-When building compiled applications from scratch, *each* source file needs to be compiled into an object file in order for them all to be linked together as a full program. This can become rather time-consuming and inefficient as your codebase expands to use tens or even hundreds of files that recompile each time you build. Fortunately, with a few clever rules in our [`Makefile`](Makefile), we can be sure to only have to recompile files affected by our changes.
-
-By using the following Make commands instead of the default target, we can skip the cleanup step, and only recompile files that changed:
-
-#### macOS & Linux
-
+**macOS / Linux**
 ```console
-$ make bin/app; make execute
+$ make server
+$ make client
+```
+or
+```console
+$ make
 ```
 
-#### Windows
+Binaries land in `bin/server.exe` / `bin/client.exe` (Windows) or `bin/server` / `bin/client` (macOS/Linux).
+
+If a rebuild fails with a linker "Permission denied" (Windows), a previous `server.exe`/`client.exe` is still running and locking the binary — close it first.
+
+## Running
+
+### Start the server
 
 ```console
-> mingw32-make bin/app && mingw32-make execute
+> bin\server.exe
 ```
+The server binds UDP port `7777` and runs a fixed 60Hz simulation tick. One server process can host multiple simultaneous rooms.
 
-Using this method can save you a huge amount of time compiling *(in reality, just a few seconds)* each time you make a small change to your code! If you want to know more about how it works, you should have a read through [the docs entry explaining the Makefile](docs/MakefileExplanation.md).
-
-While separate compilation works quite well in most scenarios, it's not magic, and there are a few caveats to take note of here:
-
-1. Changing `.h` files will often result in longer compile times by causing all files that include them to recompile
-2. Constant changes to files included by many others in your program (like a base-class) will also cause all of those dependent to recompile
-3. Including widely-scoped files (like the whole of `raylib-cpp.hpp`) will add all of its own includes as dependent and increase the build time
-4. Placing includes in `.h` files instead of forward-declarations will also increase recursive includes and therefore the build time
-
-### Passing Args to the Executable
-For working with some projects, you may want to pass arguments to the program once it's been built. This can be achieved by assigning values to the `ARGS` flag in the Makefile like below:
-
-#### macOS & Linux
+### Start a client
 
 ```console
-$ make ARGS="--somearg"
+> bin\client.exe [server-ip]
+```
+`server-ip` defaults to `127.0.0.1` (localhost). Point remote clients at the server machine's LAN/public IP instead.
+
+On launch, the client shows a room menu:
+- **Create Room** — starts a new room and gets a 6-digit room code, using whichever game mode is currently selected on the mode-cycling control.
+- **Join Room** — enter an existing room's 6-digit code to join it (inherits that room's mode; you can't pick a mode when joining).
+
+Each room supports up to 4 players.
+
+## Game modes
+
+Cycle the mode on the room-creation menu before clicking Create Room:
+
+- **FFA (Free-For-All)** — the core Hot Potato loop. Charge-and-release a throw, the potato flies with drag physics, auto-catches near any player, and has an escalating explosion timer that shrinks each time it's caught. Getting caught holding it when it explodes (or letting it fly out of bounds) Downs you and everyone else scores a point. Matches are best-of-3 rounds with sudden-death tiebreak.
+- **2v2** — same Hot Potato loop, teams instead of individuals. Slots 0+1 are Team A, slots 2+3 are Team B (fixed, no picker). Scoring is team-based; the losing player's team gets scored against, the other team gets the point. Requires all 4 slots filled before any potato/scoring activity begins — an under-populated room shows "Waiting for 4 players...". Revive-potion items spawn outside the court instead of inside it.
+- **Revive Test** — a lightweight 2-player mode with no potato at all. A hazard zone deals HP damage over time instead; a player who reaches 0 HP goes Downed, and if not revived in time, Dies and auto-respawns a few seconds later. Exists purely to test/exercise the Downed → revive → Alive flow in isolation.
+
+## Controls
+
+| Input | Action |
+|---|---|
+| `W` `A` `S` `D` | Move |
+| Mouse (hold left, release) | Charge and throw the potato |
+| `E` (hold) | Pick up a nearby item, or channel-revive a nearby Downed teammate |
+| `E` (press) | Instantly use the selected hotbar item (self-heal, if nothing to revive) |
+| `1` `2` `3` `4` | Select a hotbar slot |
+| `Q` | Melee attack (Classic-era mechanic, not used by Hot Potato modes) |
+| `Left Shift` / `Right Shift` | Dash a short distance in your current movement direction (2s cooldown) |
+| `F1` | Toggle the debug menu (per-player kill/revive/heal/give-potion actions, session-wide "New Match" reset) |
+
+## Gameplay features
+
+- **Hotbar** — a 4-slot inventory shown at the bottom of the screen. Pick up Revive Potions from the ground; select a slot with `1`-`4`; press `E` to use it. If a Downed teammate is in range, `E` channels a revive (~2s); otherwise it instantly self-heals for a fixed amount and consumes one potion.
+- **Dash** — a short-range movement burst that slides over a fraction of a second (not an instant teleport), with a cooldown. Dashing through a flying potato still catches it, even mid-slide.
+- **Revive** — a Downed player has a limited window before they Die. A teammate holding a Revive Potion can channel a revive if standing close enough; a Dead player's fate then depends on the mode (auto-respawn in Revive Test, full round-reset in FFA/2v2).
+- **Room codes** — 6-digit codes identify rooms; a server can host several rooms concurrently, each running its own independent simulation and player set.
+
+## Project structure
+
+```
+src/
+  shared/   Wire protocol structs, serialization, reliable-channel logic, UDP socket wrapper —
+            compiled into both the server and client.
+  server/   Server-authoritative simulation: session/player state, Hot Potato mechanics, combat,
+            revive, hazards, match/round scoring, dash, debug actions. No raylib dependency.
+  client/   raylib-cpp rendering, input capture, networking client, room menu, hotbar/HUD, debug menu.
+docs/
+  InstallingDependencies.md   Per-platform toolchain setup
+  MakefileExplanation.md      How the build system works
+  superpowers/specs/          Design docs for each major feature
+  superpowers/plans/          Implementation plans for each feature/phase
 ```
 
-#### Windows
+## Tests
+
+Both executables have a built-in smoke-test suite, run via a `--test` flag instead of launching normally:
 
 ```console
-> mingw32-make ARGS="--somearg"
+> bin\server.exe --test
+> bin\client.exe --test
 ```
 
-### Specifying Custom Macro Definitions
-You may also want to pass in your own macro definitions for certain configurations (such as setting log levels). You can pass in your definitions using `CXXFLAGS`:
+The server suite (`src/server/SmokeTests.h`) covers serialization, session management, combat/revive, hazards, the Hot Potato mechanics, matches/scoring, dash, game modes, and the hotbar/self-heal interaction — all exercised directly against the simulation functions, no live networking required. The client suite covers input-parsing helpers, visual-effects state, and room-menu logic.
 
-#### macOS & Linux
+## Design docs
 
-```console
-$ make CXXFLAGS=-DMY_MACRO=1
-```
-
-#### Windows
-
-```console
-> mingw32-make CXXFLAGS=-DMY_MACRO=1
-```
-
-### Specifying a Non-Default Compiler
-If you want to use a compiler for your platform that isn't the default for your system (or potentially you would like to explicitly state it), you can make use of the system-implicit `CXX` variable like so:
-
-#### macOS & Linux
-
-```console
-$ make CXX=g++
-```
-
-#### Windows
-
-```console
-> mingw32-make CXX=g++
-```
-
-## Contributing
-
-### How do I contribute?
-It's pretty simple actually:
-
-1. Fork it from [here](https://github.com/CapsCollective/raylib-cpp-starter/fork)
-2. Create your feature branch (`git checkout -b cool-new-feature`)
-3. Commit your changes (`git commit -m "Added some feature"`)
-4. Push to the branch (`git push origin cool-new-feature`)
-5. Create a new pull request for it!
-
-### Contributors
-- [jonjondev](https://github.com/jonjondev) Jonathan Moallem - co-creator, maintainer
-- [Raelr](https://github.com/Raelr) Aryeh Zinn - co-creator, maintainer
-- [mTvare6](https://github.com/mTvare6) mTvare6 - contributor
-- [rafaeldelboni](https://github.com/rafaeldelboni) Rafael Delboni - contributor
-- [jason-cannon](https://github.com/jason-cannon) Jason Cannon - contributor
-- [return215](https://github.com/return215) Muhammad Hidayat - contributor
-- [Samuel Asher Rivello](https://github.com/SamuelAsherRivello) - contributor
-- [Kirisummer](https://github.com/Kirisummer) - contributor
-
+Each major feature was designed and planned before implementation; see `docs/superpowers/specs/` for the design rationale and `docs/superpowers/plans/` for the task-by-task implementation plans, including the full Hot Potato build (5 phases: networking foundation, core mechanics, FFA scoring, dash, and 2v2/Revive Test modes) and the hotbar/item-use feature.
 
 ## Licence
 
-This project is licenced under an unmodified zlib/libpng licence, which is an OSI-certified, BSD-like licence that allows static linking with closed source software. Check [`LICENCE`](LICENCE) for further details.
+This project is built on the [Raylib C++ Starter](https://github.com/CapsCollective/raylib-cpp-starter) template and licenced under an unmodified zlib/libpng licence — see [`LICENCE`](LICENCE).
